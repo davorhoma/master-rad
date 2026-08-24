@@ -1,0 +1,67 @@
+version: "3"
+
+networks:
+  yt-tt-analysis:
+    name: yt-tt-analysis
+    external: true
+
+services:
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    ports:
+      - 9870:9870
+      - 9000:9000
+    volumes:
+      - ./data:/data
+      - hadoop_namenode:/hadoop/dfs/name
+    environment:
+      - CLUSTER_NAME=test
+    env_file:
+      - .env
+    networks:
+      - yt-tt-analysis
+
+  datanode1:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode1
+    volumes:
+      - hadoop_datanode1:/hadoop/dfs/data
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    env_file:
+      - .env
+    networks:
+      - yt-tt-analysis
+
+  datanode2:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode2
+    volumes:
+      - hadoop_datanode2:/hadoop/dfs/data
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    env_file:
+      - .env
+    networks:
+      - yt-tt-analysis
+  
+  # historyserver:
+  #   image: bde2020/hadoop-historyserver:2.0.0-hadoop3.2.1-java8
+  #   container_name: historyserver
+  #   environment:
+  #     SERVICE_PRECONDITION: "namenode:9870 datanode1:9864"
+  #   ports:
+  #     - 8188:8188
+  #   volumes:
+  #     - hadoop_historyserver:/hadoop/yarn/timeline
+  #   env_file:
+  #     - .env
+  #   networks:
+  #     - yt-tt-analysis
+  
+volumes:
+  hadoop_namenode:
+  hadoop_datanode1:
+  hadoop_datanode2:
+  # hadoop_historyserver:

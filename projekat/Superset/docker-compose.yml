@@ -1,0 +1,95 @@
+networks:
+  yt-tt-analysis:
+    name: yt-tt-analysis
+    external: true
+
+services:
+  superset-postgres:
+    image: postgres:17.7
+    container_name: superset-postgres
+
+    environment:
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: superset
+      POSTGRES_DB: superset
+
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+
+    networks:
+      - yt-tt-analysis
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset -d superset"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  superset-redis:
+    image: redis:7-alpine
+    container_name: superset-redis
+
+    networks:
+      - yt-tt-analysis
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  superset:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: superset
+
+    ports:
+      - "8088:8088"
+
+    networks:
+      - yt-tt-analysis
+
+    depends_on:
+      superset-postgres:
+        condition: service_healthy
+      superset-redis:
+        condition: service_healthy
+
+    environment:
+      SUPERSET_LOAD_EXAMPLES: "no"
+      CYPRESS_CONFIG: "false"
+
+    volumes:
+      - ./config:/app/pythonpath
+      - ./data/superset:/app/superset_home
+
+    command:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+
+        superset db upgrade
+        superset init
+
+        if ! superset fab list-users | grep -q 'username:admin'; then
+          echo "Admin user does not exist. Creating admin..."
+          superset fab create-admin \
+            --username admin \
+            --firstname Admin \
+            --lastname Admin \
+            --email admin@admin.com \
+            --password admin
+        else
+          echo "Admin user already exists. Skipping creation."
+        fi
+
+        exec gunicorn \
+          --bind 0.0.0.0:8088 \
+          --workers 4 \
+          --worker-class gthread \
+          --threads 2 \
+          --timeout 120 \
+          'superset.app:create_app()'
