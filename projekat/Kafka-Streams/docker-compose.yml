@@ -1,0 +1,272 @@
+networks:
+  yt-tt-analysis:
+    name: yt-tt-analysis
+    external: true
+
+services:
+  stream-processor-q1:
+    build:
+      context: .
+    container_name: stream-processor-query-1
+    profiles: ["q1", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_1_viral_score_by_gaming_topic"
+    command:
+      [
+        "java",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.ViralScoreByGamingThemeStream",
+      ]
+    restart: unless-stopped
+
+  stream-processor-q2:
+    build:
+      context: .
+    container_name: stream-processor-query-2
+    profiles: ["q2", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_2_views_by_theme_timeline"
+    command:
+      [
+        "java",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.ViewsByThemeTimelineStream",
+      ]
+    restart: unless-stopped
+
+  stream-processor-q3:
+    build:
+      context: .
+    container_name: stream-processor-query-3
+    profiles: ["q3", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_3_popular_gaming_keywords"
+    command:
+      [
+        "java",
+        "-Xmx512m",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.PopularGamingKeywordsStream",
+      ]
+    restart: unless-stopped
+
+  stream-processor-q4:
+    build:
+      context: .
+    container_name: stream-processor-query-4
+    profiles: ["q4", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_4_peak_popularity_days"
+    command:
+      [
+        "java",
+        "-Xmx512m",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.PeakPopularityDaysStream",
+      ]
+    deploy:
+      resources:
+        limits:
+          memory: 768M # Maksimalno RAM-a što kontejner može da potroši
+        reservations:
+          memory: 256M
+    restart: unless-stopped
+
+  stream-processor-q5:
+    build:
+      context: .
+    container_name: stream-processor-query-5
+    profiles: ["q5", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_5_platform_overlap_new"
+    command:
+      [
+        "java",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.PlatformOverlapHeatmapStream",
+      ]
+    restart: unless-stopped
+
+  stream-processor-q6:
+    build:
+      context: .
+    container_name: stream-processor-query-6
+    profiles: ["q6", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_6_trend_delay_between_platforms"
+    command:
+      [
+        "java",
+        "-Xmx512m",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.TrendDelayBetweenPlatformsStream",
+      ]
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
+    restart: unless-stopped
+
+  stream-processor-q7:
+    build:
+      context: .
+    container_name: stream-processor-query-7
+    profiles: ["q7", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_7_engagement_over_time"
+    command:
+      [
+        "java",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.SocialMediaEngagementStream",
+      ]
+    restart: unless-stopped
+
+  stream-processor-q8:
+    build:
+      context: .
+    container_name: stream-processor-query-8
+    profiles: ["q8", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_8_day_type_engagement"
+    command:
+      [
+        "java",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.SocialMediaDayTypeEngagementStream",
+      ]
+    restart: unless-stopped
+
+  stream-processor-q9:
+    build:
+      context: .
+    container_name: stream-processor-query-9
+    profiles: ["q9", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_9_emerging_topics_metrics"
+    command:
+      [
+        "java",
+        "-Xmx512m",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.EmergingTopicsStream",
+      ]
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
+    restart: unless-stopped
+
+  stream-processor-q99:
+    build:
+      context: .
+    container_name: stream-processor-query-99
+    profiles: ["q99", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_99_platform_viral_score"
+    command:
+      [
+        "java",
+        "-Xmx512m",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.PlatformViralScoreStream",
+      ]
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
+    restart: unless-stopped
+
+  stream-processor-q10:
+    build:
+      context: .
+    container_name: stream-processor-query-10
+    profiles: ["q10", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_10_time_staying_in_top_rankings"
+    command:
+      [
+        "java",
+        "-Xmx512m",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.TimeStayingInTopRankings",
+      ]
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
+    restart: unless-stopped
