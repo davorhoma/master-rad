@@ -20,8 +20,8 @@ docker compose -f Superset/docker-compose.yml up -d
 echo ">> Starting up Airflow"
 docker compose -f Airflow/docker-compose.yml up -d
 
-# echo ">> Starting up Kafka"
-# docker compose -f Kafka/docker-compose.yml up -d
+echo ">> Starting up Kafka"
+docker compose -f Kafka/docker-compose.yml up -d
 
 sleep 25
 
