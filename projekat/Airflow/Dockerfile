@@ -18,12 +18,16 @@ Package: * \
 Pin: release a=unstable\
 Pin-Priority: 50" > /etc/apt/preferences.d/99pin-unstable
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libkrb5-dev \
     openjdk-11-jdk \
     curl \
- && apt-get clean
+    ca-certificates \
+    fonts-liberation \
+    lsb-release \
+    xdg-utils \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install Spark
 ENV SPARK_VERSION=3.0.1
@@ -91,10 +95,14 @@ RUN curl -fL \
 ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 ENV PATH=$PATH:$SPARK_HOME/bin
 
-USER airflow 
+# 1. Instaliraj Python pakete kao airflow korisnik
+USER airflow
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN pip install -r requirements.txt
+USER root
+RUN python3 -m playwright install-deps chromium
 
 USER airflow
+RUN python3 -m playwright install chromium
 
 WORKDIR /opt/airflow

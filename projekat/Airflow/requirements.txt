@@ -1,3 +1,10 @@
 apache-airflow-providers-apache-hdfs==4.11.1
 apache-airflow-providers-apache-spark==5.4.1
 apache-airflow-providers-common-compat==1.10.1
+pandas
+kafka-python
+
+google-api-python-client>=2.0.0
+python-dotenv>=1.0.0
+apify-client>=1.0.0
+playwright>=1.40.0

@@ -22,8 +22,8 @@ def run_top_videos_analysis():
         "spark.driver.extraClassPath": "/opt/spark/jars/*",
     }
 
-    calculate_viral_tag_combinations = SparkSubmitOperator(
-            task_id="viral_tag_combinations",
+    viral_tags_combinations = SparkSubmitOperator(
+            task_id="viral_tags_combinations",
             application="/opt/airflow/files/spark/analytical_jobs/9_viral_tag_combinations.py",
             conn_id="SPARK_CONNECTION",
             conf=spark_jars,
@@ -32,11 +32,11 @@ def run_top_videos_analysis():
                 "{{ var.value.HDFS_DEFAULT_FS }}/transformed_tiktok_data",
                 "{{ var.value.MONGO_URI }}",
                 "historical_data",
-                "viral_tag_combinations",
+                "IP9_viral_tags_combinations",
             ],
         )
 
-    calculate_viral_tag_combinations
+    viral_tags_combinations
 
 
 run_top_videos_analysis()

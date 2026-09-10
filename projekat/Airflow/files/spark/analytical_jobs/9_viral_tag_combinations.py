@@ -8,20 +8,22 @@ def analyze_viral_tag_combinations(
 ):
     spark = SparkSession.builder.appName("ViralTagCombinationsAnalysis").getOrCreate()
 
-    # YouTube: Prepare, sort & generate combinations
+    # YouTube: Group by video_id, sort by max viral_score, limit 100 unique videos
     yt_viral = (
         spark.read.parquet(youtube_path)
-        .select(
-            col("video_id"),
-            col("viral_score").cast("double"),
-            col("tags"),
+        .groupBy("video_id")
+        .agg(
+            F.max("viral_score").cast("double").alias("viral_score"),
+            F.first("tag_array").alias(
+                "tag_array"
+            ),  # Koristimo već pripremljen niz iz Parquet-a
         )
         .orderBy(col("viral_score").desc())
         .limit(100)
     )
 
     yt_videos = (
-        yt_viral.withColumn("tag_array", F.array_distinct(F.split(col("tags"), "\\|")))
+        yt_viral.withColumn("tag_array", F.array_distinct(col("tag_array")))
         .filter((col("tag_array").isNotNull()) & (F.size(col("tag_array")) >= 2))
         .withColumn("tag_array", F.array_sort(col("tag_array")))
         .withColumn(
@@ -45,16 +47,18 @@ def analyze_viral_tag_combinations(
     yt_combination_counts = (
         yt_exploded.select(lit("YouTube").alias("platform"), col("tag_combination"))
         .groupBy("platform", "tag_combination")
-        .agg(F.count("tag_combination").alias("combination_frequency"))
+        .agg(F.count("tag_combination").cast("long").alias("combination_frequency"))
     )
 
-    # TikTok: Prepare, sort & generate combinations
+    # TikTok: Group by video_id, sort by max viral_score, limit 100 unique videos
     tt_viral = (
         spark.read.parquet(tiktok_path)
-        .select(
-            col("id").alias("video_id"),
-            col("viral_score").cast("double"),
-            col("challenges"),
+        .withColumn("video_id", col("id"))
+        .withColumn("viral_score", col("viral_score").cast("double"))
+        .groupBy("video_id")
+        .agg(
+            F.max("viral_score").alias("viral_score"),
+            F.first("challenges").alias("challenges"),
         )
         .orderBy(col("viral_score").desc())
         .limit(100)
@@ -91,17 +95,14 @@ def analyze_viral_tag_combinations(
     tt_combination_counts = (
         tt_exploded.select(lit("TikTok").alias("platform"), col("tag_combination"))
         .groupBy("platform", "tag_combination")
-        .agg(F.count("tag_combination").alias("combination_frequency"))
+        .agg(F.count("tag_combination").cast("long").alias("combination_frequency"))
     )
 
-    # 3. Combine & save to MongoDB
+    # Combine & save to MongoDB
     combined_combinations = yt_combination_counts.union(tt_combination_counts)
     final_result = combined_combinations.orderBy(
         col("platform"), col("combination_frequency").desc()
     )
-
-    # Optional show
-    # final_result.show(30, truncate=False)
 
     (
         final_result.write.format("mongodb")
