@@ -12,6 +12,8 @@ import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.streams.*;
 import org.apache.kafka.streams.kstream.*;
+import org.apache.kafka.streams.processor.Cancellable;
+import org.apache.kafka.streams.processor.PunctuationType;
 import org.apache.kafka.streams.processor.api.Processor;
 import org.apache.kafka.streams.processor.api.ProcessorContext;
 import org.apache.kafka.streams.processor.api.Record;
@@ -202,11 +204,33 @@ public class PlatformViralScoreStream2 {
                 Serdes.String());
         builder.addStateStore(historyStoreBuilder);
 
+        // KRITIČNO: themeAggregatedTable je repartition-ovan po ključu
+        // "tema_datum" (vidi .groupBy iznad, GRANA 2) - to znači da dva
+        // različita datuma ZA ISTU TEMU mogu završiti na dve različite Kafka
+        // particije, obrađene od strane dva različita Streams task-a, od
+        // kojih svaki ima SVOJU lokalnu (particionisanu) kopiju
+        // GROWTH_HISTORY_STORE-a. Rezultat: GrowthRateProcessor bi video samo
+        // ONAJ podskup dana za temu koji je slučajno hashovan na njegovu
+        // particiju - istorija bi bila fragmentisana i prosek pogrešan (npr.
+        // prior_3day_avg bi ispao jednak vrednosti samo JEDNOG dana), umesto
+        // proseka nad svim danima koji stvarno postoje u prozoru.
+        //
+        // Zato se stream OVDE eksplicitno re-key-uje na "samo tema" i
+        // eksplicitno repartition-uje (.repartition(...)) - ovo pravi novi
+        // interni repartition topik ključan po temi, garantujući da SVI
+        // datumi za istu temu završe na ISTOJ particiji/task-u, i time dele
+        // ISTU lokalnu instancu GROWTH_HISTORY_STORE-a.
+        KStream<String, PlatformMetrics> themeKeyedStream = themeAggregatedTable.toStream()
+                .selectKey((key, value) -> value.theme)
+                .repartition(Repartitioned.<String, PlatformMetrics>as("theme-daily-history-repartition")
+                        .withKeySerde(Serdes.String())
+                        .withValueSerde(new JsonSerde<>(PlatformMetrics.class)));
+
         // Napomena: TRENDING_STORE (GlobalKTable) se NE dodaje ovde kao
         // connected store - globalni store-ovi su automatski dostupni iz bilo
         // kog Processor-a preko context.getStateStore(), bez potrebe da se
         // eksplicitno navedu u .process(...) pozivu.
-        KStream<String, GrowthResult> growthStream = themeAggregatedTable.toStream()
+        KStream<String, GrowthResult> growthStream = themeKeyedStream
                 .process(GrowthRateProcessor::new, GROWTH_HISTORY_STORE);
 
         growthStream.foreach((theme, result) -> {
@@ -217,10 +241,14 @@ public class PlatformViralScoreStream2 {
                         .append("recent_3day_avg_viral_score", result.recentAvg)
                         .append("prior_3day_avg_viral_score", result.priorAvg);
 
+                // Upsert SAMO po temi (bez datuma u ključu) - ovde nam ne treba
+                // istorija growth rate-ova kroz vreme, već samo TRENUTNA vrednost
+                // za tu temu. "date" ostaje u dokumentu kao informativno polje
+                // (na osnovu kog dana je poslednji put izračunato), ali se ne
+                // koristi za pronalaženje dokumenta - zato svaki novi izračun
+                // PREPISUJE prethodni, umesto da pravi novi dokument.
                 growthCollection.updateOne(
-                        com.mongodb.client.model.Filters.and(
-                                com.mongodb.client.model.Filters.eq("topic", result.theme),
-                                com.mongodb.client.model.Filters.eq("date", result.date)),
+                        com.mongodb.client.model.Filters.eq("topic", result.theme),
                         new Document("$set", doc),
                         new UpdateOptions().upsert(true));
 
@@ -578,26 +606,33 @@ public class PlatformViralScoreStream2 {
     /**
      * Za svaku temu čuva rolling istoriju dnevnih proseka u state store-u (kao
      * JSON string), ograničenu na poslednjih 2*GROWTH_WINDOW_DAYS kalendarskih
-     * dana. Pri svakoj novoj poruci računa growth rate poredeći prosek za
-     * poslednjih GROWTH_WINDOW_DAYS kalendarskih dana (od datuma poruke unazad)
-     * sa prosekom za prethodnih GROWTH_WINDOW_DAYS kalendarskih dana pre toga -
-     * i prosleđuje rezultat dalje ako je tema još uvek "emerging" (vidi
-     * {@link #isAlreadyTrending(String)}).
+     * dana. Growth rate poredi prosek za poslednjih GROWTH_WINDOW_DAYS
+     * kalendarskih dana (računajući od STVARNOG današnjeg datuma, ne od
+     * datuma poruke) sa prosekom za prethodnih GROWTH_WINDOW_DAYS kalendarskih
+     * dana pre toga - i prosleđuje rezultat dalje ako je tema još uvek
+     * "emerging" (vidi {@link #isAlreadyTrending(String)}).
      *
-     * VAŽNO: prozori su vezani za STVARNE kalendarske datume (npr. za
-     * GROWTH_WINDOW_DAYS=3 i anchor 13.9: recent=[11.9-13.9], prior=[8.9-10.9]),
-     * a ne za "poslednjih N zapisa u istoriji". Ovo je namerno - ako tema nema
-     * podatke baš svaki dan (uobičajeno kod scraping pipeline-a), prosek se
-     * računa samo nad danima koji stvarno postoje u datom rasponu, umesto da
-     * se prozor tiho pomeri dalje unazad da bi upotpunio fiksan broj zapisa.
-     * Ako u nekom od dva prozora nema nijednog dana sa podacima, growth rate
-     * se ne računa za tu poruku (vraća se bez forward-a).
+     * VAŽNO: prozori su vezani za STVARNE kalendarske datume, sa anchor-om =
+     * {@code LocalDate.now()} (npr. za GROWTH_WINDOW_DAYS=3 i danas=13.9:
+     * recent=[11.9-13.9], prior=[8.9-10.9]), a ne za "poslednjih N zapisa u
+     * istoriji" niti za datum poruke koja je poslednja stigla za tu temu -
+     * ovo je namerno, jer poruke mogu stizati sa zakašnjenjem ili sa
+     * "collected_at"/"trending_detected_time" iz prošlosti, pa bi anchor
+     * vezan za datum poruke davao pogrešan prozor u odnosu na stvarni "danas".
+     * Ako tema nema podatke baš svaki dan (uobičajeno kod scraping
+     * pipeline-a), prosek se računa samo nad danima koji stvarno postoje u
+     * datom rasponu, umesto da se prozor tiho pomeri dalje unazad da bi
+     * upotpunio fiksan broj zapisa. Ako u nekom od dva prozora nema nijednog
+     * dana sa podacima, growth rate se ne računa za tu temu (bez forward-a).
      *
-     * Napomena: pošto se dnevni prosek (aggregatedTable po temi+datumu) ažurira
-     * postepeno kako pristižu poruke tog dana, ovaj procesor će se pozivati
-     * više puta u toku dana za isti datum — svaki put samo update-uje "današnji"
-     * unos u istoriji i prepravlja growth rate. To je očekivano i baš to daje
-     * "skoro real-time" ponašanje u Supersetu.
+     * Pošto je anchor sada vezan za stvarni "danas" a ne za dolazeće poruke,
+     * sam dolazak poruke više nije dovoljan da drži growth rate ažurnim - ako
+     * tema nema NIJEDNU novu poruku tokom dana, prozor bi i dalje trebalo da
+     * "kliza" napred svaki dan. Zato se, pored recompute-a pri svakoj
+     * pristigloj poruci, registruje i dnevni WALL_CLOCK_TIME punktuator koji
+     * prolazi kroz SVE teme u istoriji i ponovo računa growth rate u odnosu
+     * na tekući datum, bez obzira na to da li je za tu temu baš tog dana
+     * stigla nova poruka.
      */
     public static class GrowthRateProcessor implements Processor<String, PlatformMetrics, String, GrowthResult> {
         private KeyValueStore<String, String> store;
@@ -618,6 +653,35 @@ public class PlatformViralScoreStream2 {
             // bilo kog Processor-a u topologiji bez potrebe da se eksplicitno
             // navede kao "connected store" u .process(...) pozivu.
             this.trendingStore = context.getStateStore(TRENDING_STORE);
+
+            // Dnevni recompute za SVE teme, nezavisno od toga da li je za njih
+            // baš danas stigla nova poruka - inače bi prozor ostao "zaleđen"
+            // na poslednjem danu kad je tema imala saobraćaj.
+            //
+            // VAŽNO: context.schedule(interval, ...) prvi put "tikne" TEK
+            // POSLE proteklog intervala od starta procesora, ne odmah. To
+            // znači da bi, bez nekog prvog poziva uskoro po startu, dokumenti
+            // u Mongo-u za teme bez novog saobraćaja posle restarta ostali
+            // "zaleđeni" na vrednosti izračunatoj PRE restarta sve dok prvi
+            // punktuator ne tikne - i do 24h kasnije.
+            //
+            // NE SME se, međutim, pozvati recomputeAllThemes() direktno OVDE
+            // u init() - u tom trenutku downstream čvorovi topologije još
+            // nisu "otvoreni" (topologija se tek inicijalizuje), pa
+            // context.forward() (pozvan iznutra) baca
+            // "IllegalStateException: The processor is already closed".
+            // Zato se početni recompute radi kroz JEDNOKRATNI punktuator sa
+            // kratkim odlaganjem (izvršava se tek kad je topologija potpuno
+            // spremna za forward), koji sam sebe otkazuje posle prvog
+            // izvršavanja, nakon čega ostaje samo redovni 24h punktuator.
+            final Cancellable[] startupPunctuator = new Cancellable[1];
+            startupPunctuator[0] = context.schedule(java.time.Duration.ofSeconds(5),
+                    PunctuationType.WALL_CLOCK_TIME, timestamp -> {
+                        recomputeAllThemes();
+                        startupPunctuator[0].cancel();
+                    });
+            context.schedule(java.time.Duration.ofHours(24), PunctuationType.WALL_CLOCK_TIME,
+                    timestamp -> recomputeAllThemes());
         }
 
         @Override
@@ -641,63 +705,103 @@ public class PlatformViralScoreStream2 {
                 history.add(new DailyPoint(value.date, avgScore));
                 history.sort(Comparator.comparing(p -> p.date));
 
-                // "Danas" = datum poruke koja je upravo stigla (anchor tačka za
-                // prozore ispod). Ostaje čvrsto vezano za kalendarske datume,
-                // ne za broj zapisa u istoriji - vidi napomenu u klasnom Javadoc-u.
-                LocalDate anchor = LocalDate.parse(value.date, DateTimeFormatter.ISO_LOCAL_DATE);
-
-                // Prozori po LITERALNIM kalendarskim datumima:
-                // "recent" = [anchor - (GROWTH_WINDOW_DAYS - 1), anchor]
-                // "prior" = [anchor - (2*GROWTH_WINDOW_DAYS - 1), anchor - GROWTH_WINDOW_DAYS]
-                // Npr. za GROWTH_WINDOW_DAYS=3 i anchor=13.9: recent = 11-13.9,
-                // prior = 8-10.9 - tačno ono što treba, bez obzira na to da li
-                // tema ima podatke baš SVAKI dan u tom rasponu.
-                LocalDate recentStart = anchor.minusDays(GROWTH_WINDOW_DAYS - 1L);
-                LocalDate priorStart = anchor.minusDays(2L * GROWTH_WINDOW_DAYS - 1L);
-                LocalDate priorEnd = anchor.minusDays(GROWTH_WINDOW_DAYS);
-
-                // Istoriju čuvamo ograničenu na 2*GROWTH_WINDOW_DAYS kalendarskih
-                // dana unazad od anchor-a (a ne na fiksan BROJ zapisa), da JSON
-                // lista u store-u ne raste neograničeno kod dugotrajno aktivnih tema.
-                LocalDate cutoff = anchor.minusDays(2L * GROWTH_WINDOW_DAYS);
-                history.removeIf(p -> LocalDate.parse(p.date, DateTimeFormatter.ISO_LOCAL_DATE).isBefore(cutoff));
-
+                history = trimHistory(history);
                 store.put(value.theme, objectMapper.writeValueAsString(history));
 
-                List<DailyPoint> recentPoints = new ArrayList<>();
-                List<DailyPoint> priorPoints = new ArrayList<>();
-                for (DailyPoint p : history) {
-                    LocalDate d = LocalDate.parse(p.date, DateTimeFormatter.ISO_LOCAL_DATE);
-                    if (!d.isBefore(recentStart) && !d.isAfter(anchor)) {
-                        recentPoints.add(p);
-                    } else if (!d.isBefore(priorStart) && !d.isAfter(priorEnd)) {
-                        priorPoints.add(p);
-                    }
-                }
-
-                // Zahtevamo BAR PO JEDAN dan podataka u oba prozora - inače growth
-                // rate nema smisla (npr. tema se pojavila tek juče, nema šta da
-                // se poredi sa "prethodnih GROWTH_WINDOW_DAYS dana").
-                if (recentPoints.isEmpty() || priorPoints.isEmpty()) {
-                    return;
-                }
-
-                double recentAvg = average(recentPoints);
-                double priorAvg = average(priorPoints);
-                double growthRate = priorAvg > 0 ? (recentAvg - priorAvg) / priorAvg : 0.0;
-
-                if (isAlreadyTrending(value.theme)) {
-                    log.info(
-                            "Tema '{}' preskočena za ПП9 - već je u top-{} na obe platforme (AND logika).",
-                            value.theme, TRENDING_TOP_N);
-                    return;
-                }
-
-                GrowthResult result = new GrowthResult(value.theme, value.date, growthRate, recentAvg, priorAvg);
-                context.forward(new Record<>(value.theme, result, record.timestamp()));
+                computeAndForward(value.theme, history, record.timestamp());
             } catch (Exception e) {
                 log.error("Greška pri računanju growth rate-a za temu: {}", value.theme, e);
             }
+        }
+
+        /**
+         * Prolazi kroz istoriju SVIH tema u store-u i ponovo računa growth
+         * rate za svaku od njih u odnosu na trenutni datum (LocalDate.now()).
+         * Poziva se jednom dnevno iz WALL_CLOCK_TIME punktuatora, da bi
+         * prozori "klizili" napred i za teme koje tog dana nemaju nijednu
+         * novu poruku.
+         */
+        private void recomputeAllThemes() {
+            long now = System.currentTimeMillis();
+            try (KeyValueIterator<String, String> it = store.all()) {
+                while (it.hasNext()) {
+                    KeyValue<String, String> kv = it.next();
+                    String theme = kv.key;
+                    try {
+                        List<DailyPoint> history = kv.value == null
+                                ? new ArrayList<>()
+                                : objectMapper.readValue(kv.value, new TypeReference<List<DailyPoint>>() {
+                                });
+                        history = trimHistory(history);
+                        store.put(theme, objectMapper.writeValueAsString(history));
+                        computeAndForward(theme, history, now);
+                    } catch (Exception e) {
+                        log.error("Greška pri dnevnom recompute-u growth rate-a za temu: {}", theme, e);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Uklanja iz istorije dane starije od 2*GROWTH_WINDOW_DAYS kalendarskih
+         * dana unazad od STVARNOG današnjeg datuma (a ne od fiksnog BROJA
+         * zapisa), da JSON lista u store-u ne raste neograničeno kod
+         * dugotrajno aktivnih tema.
+         */
+        private List<DailyPoint> trimHistory(List<DailyPoint> history) {
+            LocalDate anchor = LocalDate.now();
+            LocalDate cutoff = anchor.minusDays(2L * GROWTH_WINDOW_DAYS);
+            history.removeIf(p -> LocalDate.parse(p.date, DateTimeFormatter.ISO_LOCAL_DATE).isBefore(cutoff));
+            return history;
+        }
+
+        /**
+         * Računa growth rate za datu temu na osnovu njene istorije, poredeći
+         * prozor [danas - (GROWTH_WINDOW_DAYS-1), danas] sa prozorom
+         * [danas - (2*GROWTH_WINDOW_DAYS-1), danas - GROWTH_WINDOW_DAYS], gde
+         * je "danas" = LocalDate.now() (stvarni kalendarski datum, ne datum
+         * poslednje poruke). Dani bez podataka se jednostavno ne nalaze u
+         * istoriji i zato ne ulaze u prosek - prosek se računa samo nad
+         * danima koji STVARNO postoje u datom rasponu.
+         */
+        private void computeAndForward(String theme, List<DailyPoint> history, long timestamp) {
+            LocalDate anchor = LocalDate.now();
+
+            LocalDate recentStart = anchor.minusDays(GROWTH_WINDOW_DAYS - 1L);
+            LocalDate priorStart = anchor.minusDays(2L * GROWTH_WINDOW_DAYS - 1L);
+            LocalDate priorEnd = anchor.minusDays(GROWTH_WINDOW_DAYS);
+
+            List<DailyPoint> recentPoints = new ArrayList<>();
+            List<DailyPoint> priorPoints = new ArrayList<>();
+            for (DailyPoint p : history) {
+                LocalDate d = LocalDate.parse(p.date, DateTimeFormatter.ISO_LOCAL_DATE);
+                if (!d.isBefore(recentStart) && !d.isAfter(anchor)) {
+                    recentPoints.add(p);
+                } else if (!d.isBefore(priorStart) && !d.isAfter(priorEnd)) {
+                    priorPoints.add(p);
+                }
+            }
+
+            // Zahtevamo BAR PO JEDAN dan podataka u oba prozora - inače growth
+            // rate nema smisla (npr. tema se pojavila tek juče, nema šta da
+            // se poredi sa "prethodnih GROWTH_WINDOW_DAYS dana").
+            if (recentPoints.isEmpty() || priorPoints.isEmpty()) {
+                return;
+            }
+
+            double recentAvg = average(recentPoints);
+            double priorAvg = average(priorPoints);
+            double growthRate = priorAvg > 0 ? (recentAvg - priorAvg) / priorAvg : 0.0;
+
+            if (isAlreadyTrending(theme)) {
+                log.info(
+                        "Tema '{}' preskočena za ПП9 - već je u top-{} na obe platforme (AND logika).",
+                        theme, TRENDING_TOP_N);
+                return;
+            }
+
+            GrowthResult result = new GrowthResult(theme, anchor.toString(), growthRate, recentAvg, priorAvg);
+            context.forward(new Record<>(theme, result, timestamp));
         }
 
         /**
