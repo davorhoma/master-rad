@@ -25,7 +25,7 @@ if __name__ == "__main__":
     df = (
         df.withColumn(
             "create_time", F.to_timestamp(F.col("create_time").cast("long"))
-        )  # Ako je timestamp u sekundama, ili prilagodi format
+        )  # Ako je timestamp u sekundama, ako ne, prilagoditi format
         .withColumn(
             "collected_time", F.to_timestamp(F.col("collected_time").cast("long"))
         )
@@ -38,18 +38,16 @@ if __name__ == "__main__":
         .withColumn("collect_count", F.col("collect_count").cast("long"))
         .withColumn(
             "duration", F.col("duration").cast("int")
-        )  # Na TikToku je duration obično već u sekundama (int)
+        )  # Na TikToku je duration već u sekundama (int)
     )
 
     # 2. Čišćenje podataka (Outliers po broju pregleda)
     df = df.filter(F.col("play_count") <= MAX_REALISTIC_PLAYS)
 
     # 3. Priprema i obrada izazova/tagova (Značajno za TikTok pitanja o tagovima)
-    # Kolona 'challenges' obično sadrži hashtagove (npr. u JSON formatu ili razdvojene nekim karakterom)
-    # Ovde hvatamo kolonu, a broj tagova računamo na osnovu razdvajanja ili dužine
+    # Kolona 'challenges' sadrži hashtagove
     df = df.withColumn("clean_challenges", F.coalesce(F.col("challenges"), F.lit("")))
 
-    # Pretpostavka: izazovi/tagovi su razdvojeni zarezom ili razmakom (prilagodi separator po potrebi)
     df = df.withColumn(
         "tag_array", F.split(F.col("clean_challenges"), r",")
     ).withColumn(

@@ -29,7 +29,7 @@ if __name__ == "__main__":
         .csv(input_file_path)
     )
 
-    # 1. Normalizacija naziva kolona u snake_case (npr. publishedAt -> published_at)
+    # 1. Normalizacija naziva kolona u snake_case
     df = df.select(*[F.col(c).alias(to_snake_case(c)) for c in df.columns])
 
     # 2. Tipizacija podataka (Cast)
@@ -71,8 +71,6 @@ if __name__ == "__main__":
     )
 
     # 5. Priprema i obrada tagova (Značajno za pitanja 7, 8 i 9)
-    # Pretpostavka je da su tagovi razdvojeni sa "|" ili ",". Ovde ih čistimo i brojimo.
-    # Takođe pravimo niz tagova (array) lakši za dalje analize kombinacija.
     df = df.withColumn("clean_tags", F.coalesce(F.col("tags"), F.lit("")))
 
     # Ako su tagovi razdvojeni sa "|" (standardno za YouTube API/datasetove)
@@ -95,7 +93,7 @@ if __name__ == "__main__":
         )
     )
 
-    # Izračunavanje viral_score metrike prema tvojoj definiciji
+    # Izračunavanje viral_score metrike prema definiciji
     df = df.withColumn(
         "viral_score",
         F.round(
@@ -107,7 +105,6 @@ if __name__ == "__main__":
     ).drop("safe_views")
 
     # 7. Čuvanje pripremljenih podataka u Parquet formatu
-    # Parquet čuva strukturu (uključujući nizove/array za tagove) i idealan je za Spark analitiku
     df.write.mode("overwrite").parquet(output_path)
 
     print("Priprema YouTube Gaming podataka uspešno završena.")
