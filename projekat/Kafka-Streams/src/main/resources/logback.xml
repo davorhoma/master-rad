@@ -1,0 +1,20 @@
+<configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} -- %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Tvoja aplikacija: INFO je dovoljno da vidiš tok i greške -->
+    <logger name="com.example.kafka_streams_examples" level="INFO"/>
+
+    <!-- Kafka klijent/streams interni logovi: DEBUG je previše šuma, ERROR/WARN je dovoljno -->
+    <logger name="org.apache.kafka" level="WARN"/>
+
+    <!-- Mongo driver: WARN da ne zatrpava konzolu -->
+    <logger name="org.mongodb" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>

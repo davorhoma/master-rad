@@ -243,6 +243,35 @@ services:
           memory: 256M
     restart: unless-stopped
 
+  stream-processor-q992:
+    build:
+      context: .
+    container_name: stream-processor-query-992
+    profiles: ["q992", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+      MONGO_DB: "realtime_data"
+      MONGO_COLLECTION: "query_992_platform_viral_score"
+      MONGO_GROWTH_COLLECTION: "query_992_growth"
+    command:
+      [
+        "java",
+        "-Xmx512m",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.PlatformViralScoreStream2",
+      ]
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
+    restart: unless-stopped
+
   stream-processor-q10:
     build:
       context: .
