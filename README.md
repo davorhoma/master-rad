@@ -149,7 +149,7 @@ Historical data is collected once and used for long-term pattern analysis; monit
 │   ├── Superset/           # Superset Docker Compose and configuration
 │   ├── scripts/            # Scripts for starting/stopping the cluster
 │   └── README.md
-├── slike/               # Architecture and system diagrams
+├── slike/               # Architecture diagram and Superset dashboard screenshots
 │   |── Master-rad-Architecture_diagram.png
 |   ├── dashboard-1.jpg
 |   ├── dashboard-2.jpg
