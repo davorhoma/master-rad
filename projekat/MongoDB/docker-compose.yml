@@ -16,6 +16,12 @@ services:
       - mongodb_data:/data/db
     networks:
       - yt-tt-analysis
+    command: mongod --wiredTigerCacheSizeGB 1.0
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 2GB
 
   mongo-express:
     image: mongo-express:1.0.0
