@@ -225,3 +225,4 @@ with DAG(
     t_tt_search >> t_send_tt_search
     # scrapers = [t_yt_mon, t_tt_mon, t_yt_search, t_tt_search]
     # kafka_senders = [t_send_yt_mon, t_send_tt_mon, t_send_yt_search, t_send_tt_search]
+    # kafka_senders
