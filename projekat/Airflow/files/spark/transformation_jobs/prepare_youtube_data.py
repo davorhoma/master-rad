@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
     spark = SparkSession.builder.appName("prepare_youtube_gaming_data").getOrCreate()
 
-    # Čitanje ulaznog CSV fajla na osnovu tvog headera
+    # Čitanje ulaznog CSV fajla na osnovu headera
     df = (
         spark.read.option("header", "true")
         .option("inferSchema", "true")
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     # 1. Normalizacija naziva kolona u snake_case
     df = df.select(*[F.col(c).alias(to_snake_case(c)) for c in df.columns])
 
-    # 2. Tipizacija podataka (Cast)
+    # 2. Tipizacija podataka
     df = (
         df.withColumn(
             "trending_date", F.to_date("trending_date", "yy.dd.MM")
@@ -44,7 +44,7 @@ if __name__ == "__main__":
         .withColumn("comment_count", F.col("comment_count").cast("long"))
     )
 
-    # 3. Čišćenje podataka (Outliers)
+    # 3. Čišćenje podataka
     df = df.filter(F.col("view_count") <= MAX_REALISTIC_VIEWS)
 
     # 4. Transformacija trajanja (ISO 8601 u sekunde)
@@ -70,10 +70,9 @@ if __name__ == "__main__":
         .drop("duration_h", "duration_m", "duration_s", "duration")
     )
 
-    # 5. Priprema i obrada tagova (Značajno za pitanja 7, 8 i 9)
+    # 5. Priprema i obrada tagova (korisno za pitanja 7, 8 i 9)
     df = df.withColumn("clean_tags", F.coalesce(F.col("tags"), F.lit("")))
 
-    # Ako su tagovi razdvojeni sa "|" (standardno za YouTube API/datasetove)
     df = df.withColumn("tag_array", F.split(F.col("clean_tags"), r"\|")).withColumn(
         "tag_count",
         F.when(

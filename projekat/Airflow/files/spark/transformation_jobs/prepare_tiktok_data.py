@@ -20,7 +20,7 @@ if __name__ == "__main__":
         .csv(input_file_path)
     )
 
-    # 1. Tipizacija podataka (Cast)
+    # 1. Tipizacija podataka
     # Na TikTok-u su pregledi pod nazivom play_count, lajkovi kao digg_count, a komentari comment_count
     df = (
         df.withColumn(
@@ -41,10 +41,10 @@ if __name__ == "__main__":
         )  # Na TikToku je duration već u sekundama (int)
     )
 
-    # 2. Čišćenje podataka (Outliers po broju pregleda)
+    # 2. Čišćenje podataka
     df = df.filter(F.col("play_count") <= MAX_REALISTIC_PLAYS)
 
-    # 3. Priprema i obrada izazova/tagova (Značajno za TikTok pitanja o tagovima)
+    # 3. Priprema i obrada izazova/tagova (značajno za TikTok pitanja o tagovima)
     # Kolona 'challenges' sadrži hashtagove
     df = df.withColumn("clean_challenges", F.coalesce(F.col("challenges"), F.lit("")))
 
@@ -58,7 +58,6 @@ if __name__ == "__main__":
     )
 
     # 4. Dodavanje analitičkih metrika i 'viral_score' prilagođenog za TikTok
-    # Koristimo play_count umesto views, i digg_count umesto likes
     df = (
         df.withColumn("safe_plays", F.greatest(F.col("play_count"), F.lit(1)))
         .withColumn(
@@ -70,7 +69,7 @@ if __name__ == "__main__":
         )
     )
 
-    # Izračunavanje viral_score metrike po analogiji sa YouTube-om (uz prilagođene nazive kolona)
+    # Izračunavanje viral_score metrike
     df = df.withColumn(
         "viral_score",
         F.round(
