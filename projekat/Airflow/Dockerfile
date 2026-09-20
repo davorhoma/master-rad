@@ -30,8 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install Spark
-ENV SPARK_VERSION=3.0.1
-ENV HADOOP_VERSION=3.2
+ENV SPARK_VERSION=3.5.3
+ENV HADOOP_VERSION=3
 ENV SPARK_HOME=/opt/spark
 
 RUN curl -L https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz \
@@ -47,49 +47,50 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 # ---- Download MongoDB Spark Connector ----
 
-# Mongo Spark Connector
 RUN curl -fL \
-  https://repo1.maven.org/maven2/org/mongodb/spark/mongo-spark-connector_2.12/10.2.0/mongo-spark-connector_2.12-10.2.0.jar \
-  -o /opt/spark/jars/mongo-spark-connector_2.12-10.2.0.jar
+  https://repo1.maven.org/maven2/org/mongodb/spark/mongo-spark-connector_2.12/10.5.0/mongo-spark-connector_2.12-10.5.0.jar \
+  -o /opt/spark/jars/mongo-spark-connector_2.12-10.5.0.jar
 
 # MongoDB Java Driver dependencies
 RUN curl -fL \
-  https://repo1.maven.org/maven2/org/mongodb/mongodb-driver-sync/4.8.2/mongodb-driver-sync-4.8.2.jar \
-  -o /opt/spark/jars/mongodb-driver-sync-4.8.2.jar
+  https://repo1.maven.org/maven2/org/mongodb/mongodb-driver-sync/5.1.1/mongodb-driver-sync-5.1.1.jar \
+  -o /opt/spark/jars/mongodb-driver-sync-5.1.1.jar
 
 RUN curl -fL \
-  https://repo1.maven.org/maven2/org/mongodb/mongodb-driver-core/4.8.2/mongodb-driver-core-4.8.2.jar \
-  -o /opt/spark/jars/mongodb-driver-core-4.8.2.jar
+  https://repo1.maven.org/maven2/org/mongodb/mongodb-driver-core/5.1.1/mongodb-driver-core-5.1.1.jar \
+  -o /opt/spark/jars/mongodb-driver-core-5.1.1.jar
 
 RUN curl -fL \
-  https://repo1.maven.org/maven2/org/mongodb/bson/4.8.2/bson-4.8.2.jar \
-  -o /opt/spark/jars/bson-4.8.2.jar
+  https://repo1.maven.org/maven2/org/mongodb/bson/5.1.1/bson-5.1.1.jar \
+  -o /opt/spark/jars/bson-5.1.1.jar
+
 # ---- Fix permissions ----
-RUN chown root:root /opt/spark/jars/mongo-spark-connector_2.12-10.2.0.jar
-RUN chown root:root /opt/spark/jars/mongodb-driver-sync-4.8.2.jar
-RUN chown root:root /opt/spark/jars/mongodb-driver-core-4.8.2.jar
-RUN chown root:root /opt/spark/jars/bson-4.8.2.jar
+RUN chown root:root \
+  /opt/spark/jars/mongo-spark-connector_2.12-10.5.0.jar \
+  /opt/spark/jars/mongodb-driver-sync-5.1.1.jar \
+  /opt/spark/jars/mongodb-driver-core-5.1.1.jar \
+  /opt/spark/jars/bson-5.1.1.jar
 
 # ---- Spark Kafka Connector ----
 RUN curl -fL \
-  https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.0.1/spark-sql-kafka-0-10_2.12-3.0.1.jar \
-  -o /opt/spark/jars/spark-sql-kafka-0-10_2.12-3.0.1.jar
+  https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/${SPARK_VERSION}/spark-sql-kafka-0-10_2.12-${SPARK_VERSION}.jar \
+  -o /opt/spark/jars/spark-sql-kafka-0-10_2.12-${SPARK_VERSION}.jar
 
 RUN curl -fL \
-  https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.12/3.0.1/spark-token-provider-kafka-0-10_2.12-3.0.1.jar \
-  -o /opt/spark/jars/spark-token-provider-kafka-0-10_2.12-3.0.1.jar
+  https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.12/${SPARK_VERSION}/spark-token-provider-kafka-0-10_2.12-${SPARK_VERSION}.jar \
+  -o /opt/spark/jars/spark-token-provider-kafka-0-10_2.12-${SPARK_VERSION}.jar
 
 RUN curl -fL \
-  https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/2.4.1/kafka-clients-2.4.1.jar \
-  -o /opt/spark/jars/kafka-clients-2.4.1.jar
+  https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.5.1/kafka-clients-3.5.1.jar \
+  -o /opt/spark/jars/kafka-clients-3.5.1.jar
 
-RUN chown root:root /opt/spark/jars/spark-sql-kafka-0-10_2.12-3.0.1.jar \
-    && chown root:root /opt/spark/jars/spark-token-provider-kafka-0-10_2.12-3.0.1.jar \
-    && chown root:root /opt/spark/jars/kafka-clients-2.4.1.jar
+RUN chown root:root /opt/spark/jars/spark-sql-kafka-0-10_2.12-${SPARK_VERSION}.jar \
+    && chown root:root /opt/spark/jars/spark-token-provider-kafka-0-10_2.12-${SPARK_VERSION}.jar \
+    && chown root:root /opt/spark/jars/kafka-clients-3.5.1.jar
 
 RUN curl -fL \
-  https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.6.2/commons-pool2-2.6.2.jar \
-  -o /opt/spark/jars/commons-pool2-2.6.2.jar
+  https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.11.1/commons-pool2-2.11.1.jar \
+  -o /opt/spark/jars/commons-pool2-2.11.1.jar
 
 # Environment
 ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64

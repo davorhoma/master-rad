@@ -21,7 +21,7 @@ def calculate_top_channels(youtube_path, tiktok_path, mongo_uri, db_name, coll_n
     tt_df = (
         spark.read.parquet(tiktok_path)
         .select(
-            col("user_id").alias("channel_name"),
+            col("author_name").alias("channel_name"),
             year(to_date(col("create_time"))).alias("year"),
             col("viral_score"),
             lit("TikTok").alias("platform"),

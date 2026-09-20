@@ -26,8 +26,8 @@ def transform_raw_data():
             application="/opt/airflow/files/spark/transformation_jobs/prepare_tiktok_data.py",
             conn_id="SPARK_CONNECTION",
             application_args=[
-                "{{ var.value.HDFS_DEFAULT_FS }}/data/historical_tiktok_gaming_data.csv",
-                "{{ var.value.HDFS_DEFAULT_FS }}/transformed_tiktok_data",
+                "{{ var.value.HDFS_DEFAULT_FS }}/data/tiktok_enriched_data.csv",
+                "{{ var.value.HDFS_DEFAULT_FS }}/transformed_enriched_tiktok_data",
             ],
         )
 
