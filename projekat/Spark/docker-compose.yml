@@ -2,51 +2,69 @@ networks:
   yt-tt-analysis:
     name: yt-tt-analysis
     external: true
+
 services:
   spark-master:
-    image: bde2020/spark-master:3.0.1-hadoop3.2
+    image: apache/spark:3.5.3
     container_name: spark-master
+    user: root
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      --host 0.0.0.0 --port 7077 --webui-port 8080
+    environment:
+      - PYSPARK_PYTHON=python3
+      - SPARK_DIST_CLASSPATH=/opt/spark-extra-jars/*
     ports:
       - 8000:8080
       - 7077:7077
-    environment:
-      - PYSPARK_PYTHON=python3
     env_file:
       - .env
     volumes:
       - ../Airflow/files:/opt/airflow/files
-      - ../Airflow/spark-jars:/opt/spark/jars
+      - ../Airflow/spark-jars:/opt/spark-extra-jars
     networks:
       - yt-tt-analysis
+
   spark-worker-1:
-    image: bde2020/spark-worker:3.0.1-hadoop3.2
+    image: apache/spark:3.5.3
     container_name: spark-worker-1
+    user: root
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077 --webui-port 8081 --cores 4 --memory 4g
     depends_on:
       - spark-master
     environment:
-      - SPARK_MASTER=spark://spark-master:7077
+      - PYSPARK_PYTHON=python3
+      - SPARK_DIST_CLASSPATH=/opt/spark-extra-jars/*
     ports:
       - 8001:8081
     env_file:
       - .env
     volumes:
       - ../Airflow/files:/opt/airflow/files
-      - ../Airflow/spark-jars:/opt/spark/jars
+      - ../Airflow/spark-jars:/opt/spark-extra-jars
     networks:
       - yt-tt-analysis
+
   spark-worker-2:
-    image: bde2020/spark-worker:3.0.1-hadoop3.2
+    image: apache/spark:3.5.3
     container_name: spark-worker-2
+    user: root
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077 --webui-port 8081 --cores 4 --memory 4g
     depends_on:
       - spark-master
     environment:
-      - SPARK_MASTER=spark://spark-master:7077
+      - PYSPARK_PYTHON=python3
+      - SPARK_DIST_CLASSPATH=/opt/spark-extra-jars/*
     ports:
       - 8002:8081
     env_file:
       - .env
     volumes:
       - ../Airflow/files:/opt/airflow/files
-      - ../Airflow/spark-jars:/opt/spark/jars
+      - ../Airflow/spark-jars:/opt/spark-extra-jars
     networks:
       - yt-tt-analysis
