@@ -26,7 +26,11 @@ def calculate_top_channels(youtube_path, tiktok_path, mongo_uri, db_name, coll_n
             col("viral_score"),
             lit("TikTok").alias("platform"),
         )
-        .filter(col("year") == 2025)
+        .filter(
+            (col("year") == 2025)
+            & col("channel_name").isNotNull()
+            & (F.trim(col("channel_name")) != "")
+        )
     )
 
     combined_df = yt_df.union(tt_df)
