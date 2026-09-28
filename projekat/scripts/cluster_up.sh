@@ -2,8 +2,13 @@
 
 echo "> Starting up cluster"
 
-echo "> Creating docker network 'yt-tt-analysis'"
-docker network create yt-tt-analysis
+echo "> Checking docker network 'yt-tt-analysis'"
+if ! docker network inspect yt-tt-analysis >/dev/null 2>&1; then
+	echo ">> Creating docker network 'yt-tt-analysis'"
+	docker network create yt-tt-analysis
+else
+	echo ">> Docker network 'yt-tt-analysis' already exists"
+fi
 
 echo ">> Starting up HDFS"
 docker compose -f Hadoop/docker-compose.yml up -d

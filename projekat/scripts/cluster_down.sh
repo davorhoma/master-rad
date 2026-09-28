@@ -20,5 +20,7 @@ docker compose -f Hadoop/docker-compose.yml down
 echo ">> Shutting down Kafka"
 docker compose -f Kafka/docker-compose.yml down
 
-echo "> Deleting 'yt-tt-analysis' network"
-docker network rm yt-tt-analysis
+if [ "$1" = "--remove-network" ]; then
+	echo "> Deleting 'yt-tt-analysis' network"
+	docker network rm yt-tt-analysis
+fi
