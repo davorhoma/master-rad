@@ -73,7 +73,6 @@ def _send_file_to_kafka_incremental(file_name, topic_env_key, default_topic):
             # producer.send je asinhron - ne blokira izvršavanje, već stavlja poruku u memorijski bafer
             producer.send(topic_name, value=row_dict)
 
-            # (Opcionalno) Ako želiš da povremeno ispuniš bafer ili da ispišeš progres
             if (i + 1) % 500 == 0:
                 print(f"Poslato {i + 1} / {len(new_records)} poruka...")
 
@@ -93,7 +92,6 @@ def _send_file_to_kafka_incremental(file_name, topic_env_key, default_topic):
 
 
 def scrape_youtube_monitoring():
-    # Vaš kod za scrapovanje YouTube monitoring-a i čuvanje u CSV
     print("Pokrecem yt_monitoring_scraper")
     yt_monitoring_scraper()
 
@@ -104,7 +102,6 @@ def scrape_tiktok_monitoring():
 
 
 def scrape_youtube_search():
-    # Vaš kod za scrapovanje TikTok monitoring-a i čuvanje u CSV
     print("Pokrecem yt_search_scraper1")
     yt_query_scraper1()
 
@@ -114,7 +111,6 @@ def scrape_youtube_search():
 
 
 def scrape_tiktok_search():
-    # Vaš kod za scrapovanje TikTok monitoring-a i čuvanje u CSV
     print("Pokrecem tt_playwright_scraper1")
     tt_playwright_scraper1()
 

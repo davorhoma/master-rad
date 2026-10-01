@@ -50,19 +50,19 @@ def run_top_videos_analysis():
         ],
     )
 
-    # calculate_top_keywords = SparkSubmitOperator(
-    #     task_id="spark_top_keywords_task",
-    #     application="/opt/airflow/files/spark/analytical_jobs/3_top_gaming_keywords_by_platform.py",
-    #     conn_id="SPARK_CONNECTION",
-    #     conf=spark_jars,
-    #     application_args=[
-    #         "{{ var.value.HDFS_DEFAULT_FS }}/transformed_youtube_data",
-    #         "{{ var.value.HDFS_DEFAULT_FS }}/transformed_tiktok_data",
-    #         "{{ var.value.MONGO_URI }}",
-    #         "historical_data",
-    #         "top_gaming_keywords_by_platform",
-    #     ],
-    # )
+    calculate_average_views_and_engagement = SparkSubmitOperator(
+        task_id="spark_average_views_and_engagement_task",
+        application="/opt/airflow/files/spark/analytical_jobs/3_average_views_and_engagement_over_time.py",
+        conn_id="SPARK_CONNECTION",
+        conf=spark_jars,
+        application_args=[
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_youtube_data",
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_enriched_tiktok_data",
+            "{{ var.value.MONGO_URI }}",
+            "historical_data",
+            "IP3_average_views_and_engagement",
+        ],
+    )
 
     calculate_viral_score_distribution = SparkSubmitOperator(
         task_id="spark_viral_score_distribution_task",
@@ -78,11 +78,87 @@ def run_top_videos_analysis():
         ],
     )
 
-    [
-        calculate_top_videos,
-        calculate_top_channels,
-        # calculate_top_keywords >> calculate_viral_score_distribution,
-    ]
+    calculate_duration_viral_score = SparkSubmitOperator(
+        task_id="spark_duration_viral_score_task",
+        application="/opt/airflow/files/spark/analytical_jobs/5_duration_viral_score.py",
+        conn_id="SPARK_CONNECTION",
+        conf=spark_jars,
+        application_args=[
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_youtube_data",
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_enriched_tiktok_data",
+            "{{ var.value.MONGO_URI }}",
+            "historical_data",
+            "duration_viral_score",
+        ],
+    )
+
+    calculate_average_duration = SparkSubmitOperator(
+        task_id="spark_average_duration_task",
+        application="/opt/airflow/files/spark/analytical_jobs/6_average_duration.py",
+        conn_id="SPARK_CONNECTION",
+        conf=spark_jars,
+        application_args=[
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_youtube_data",
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_enriched_tiktok_data",
+            "{{ var.value.MONGO_URI }}",
+            "historical_data",
+            "average_duration",
+        ],
+    )
+
+    calculate_top_100_tags_count = SparkSubmitOperator(
+        task_id="spark_top_100_tags_count_task",
+        application="/opt/airflow/files/spark/analytical_jobs/7_top_100_tags_count.py",
+        conn_id="SPARK_CONNECTION",
+        conf=spark_jars,
+        application_args=[
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_youtube_data",
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_enriched_tiktok_data",
+            "{{ var.value.MONGO_URI }}",
+            "historical_data",
+            "top_100_tags_count",
+        ],
+    )
+
+    calculate_top_100_frequent_tags = SparkSubmitOperator(
+        task_id="spark_top_100_frequent_tags_task",
+        application="/opt/airflow/files/spark/analytical_jobs/8_top_100_frequent_tags.py",
+        conn_id="SPARK_CONNECTION",
+        conf=spark_jars,
+        application_args=[
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_youtube_data",
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_enriched_tiktok_data",
+            "{{ var.value.MONGO_URI }}",
+            "historical_data",
+            "IP8_top_100_frequent_tags",
+        ],
+    )
+
+    calculate_viral_tag_combinations = SparkSubmitOperator(
+        task_id="spark_viral_tag_combinations_task",
+        application="/opt/airflow/files/spark/analytical_jobs/9_viral_tag_combinations.py",
+        conn_id="SPARK_CONNECTION",
+        conf=spark_jars,
+        application_args=[
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_youtube_data",
+            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_enriched_tiktok_data",
+            "{{ var.value.MONGO_URI }}",
+            "historical_data",
+            "IP9_viral_tags_combinations",
+        ],
+    )
+
+    (
+        calculate_top_videos
+        >> calculate_top_channels
+        >> calculate_average_views_and_engagement
+        >> calculate_viral_score_distribution
+        >> calculate_duration_viral_score
+        >> calculate_average_duration
+        >> calculate_top_100_tags_count
+        >> calculate_top_100_frequent_tags
+        >> calculate_viral_tag_combinations
+    )
 
 
 run_top_videos_analysis()
