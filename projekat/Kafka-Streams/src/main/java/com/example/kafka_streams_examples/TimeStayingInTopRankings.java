@@ -1,5 +1,6 @@
 package com.example.kafka_streams_examples;
 
+import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -43,6 +44,7 @@ public class TimeStayingInTopRankings {
         config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
         // MongoDB konekcija
         String mongoUri = System.getenv().getOrDefault("MONGO_URI", "mongodb://admin:admin@mongodb:27017");
@@ -51,6 +53,9 @@ public class TimeStayingInTopRankings {
 
         MongoClient mongoClient = MongoClients.create(mongoUri);
         MongoDatabase database = mongoClient.getDatabase(mongoDbName);
+
+        MongoIndexManager.ensureIndexes(database, mongoCollectionName);
+        
         MongoCollection<Document> collection = database.getCollection(mongoCollectionName);
 
         StreamsBuilder builder = new StreamsBuilder();

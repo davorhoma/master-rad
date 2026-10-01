@@ -1,5 +1,6 @@
 package com.example.kafka_streams_examples;
 
+import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -128,6 +129,7 @@ public class PeakPopularityDaysStream {
         config.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
         config.put(StreamsConfig.STATESTORE_CACHE_MAX_BYTES_CONFIG, 10 * 1024 * 1024L);
         config.put(StreamsConfig.NUM_STREAM_THREADS_CONFIG, 4);
+        config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
         String mongoUri = System.getenv().getOrDefault("MONGO_URI", "mongodb://admin:admin@mongodb:27017");
         String mongoDbName = System.getenv().getOrDefault("MONGO_DB", "realtime_data");
@@ -135,6 +137,9 @@ public class PeakPopularityDaysStream {
 
         MongoClient mongoClient = MongoClients.create(mongoUri);
         MongoDatabase database = mongoClient.getDatabase(mongoDbName);
+
+        MongoIndexManager.ensureIndexes(database, mongoCollectionName);
+        
         MongoCollection<Document> collection = database.getCollection(mongoCollectionName);
         System.out.println("Successfully connected to MongoDB database: " + mongoDbName);
 
@@ -242,7 +247,7 @@ public class PeakPopularityDaysStream {
 
                 if (totalMessages % 1000 == 0 || totalWrites % 1000 == 0) {
                     System.out.println("Obrađeno poruka: " + totalMessages +
-                            " | Ažuriranih vrhunaca u MongoDB: " + totalWrites +
+                            " | Ažuriranih zapisa u MongoDB: " + totalWrites +
                             " | Video ID: " + state.videoId +
                             " | Max Views: " + state.maxViews +
                             " | Dana do maksimuma: " + (Math.round(state.daysToPeak * 100.0) / 100.0));

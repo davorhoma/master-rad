@@ -24,11 +24,12 @@ public class SocialMediaProcessor {
         String ttSearchTopic = System.getenv().getOrDefault("TT_SEARCH_TOPIC", "tt-search-topic");
 
         // 2. Konfiguracija Kafka Streams aplikacije
-        Properties props = new Properties();
-        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "social-media-stream-processor");
-        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
-        props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+        Properties config = new Properties();
+        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "social-media-stream-processor");
+        config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+        config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+        config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
         StreamsBuilder builder = new StreamsBuilder();
 
@@ -71,7 +72,7 @@ public class SocialMediaProcessor {
         ttSearchStream.peek((key, value) -> System.out.println("[TT-SEARCH] Primljeno: " + value));
 
         // 4. Pokretanje Kafka Streams topologije
-        KafkaStreams streams = new KafkaStreams(builder.build(), props);
+        KafkaStreams streams = new KafkaStreams(builder.build(), config);
         CountDownLatch latch = new CountDownLatch(1);
 
         Runtime.getRuntime().addShutdownHook(new Thread("streams-shutdown-hook") {

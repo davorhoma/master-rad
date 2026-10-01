@@ -24,6 +24,7 @@ import org.apache.kafka.streams.state.KeyValueStore;
 import org.apache.kafka.streams.state.Stores;
 import org.bson.Document;
 
+import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -50,9 +51,9 @@ public class PopularGamingKeywordsStream {
             "i", "you", "it", "not", "or", "be", "are", "from", "at", "as", "your", "all", "have",
             "new", "more", "an", "was", "we", "will", "my", "one", "all", "would", "there", "their",
             "i", "je", "se", "da", "su", "u", "na", "za", "sa", "po", "od", "do", "kako", "što",
-            // Dodati domeni i URL fragmenti
+            // Domeni i URL fragmenti
             "https", "http", "www", "com", "net", "org", "br",
-            // Dodate društvene mreže i često korišćene reči iz opisa
+            // Društvene mreže i često korišćene reči iz opisa
             "youtube", "instagram", "twitch", "discord", "tiktok", "twitter", "kick", "youtu",
             "facebook", "gmail", "channel", "canal", "video", "videos", "link", "email", "contato"));
 
@@ -66,6 +67,7 @@ public class PopularGamingKeywordsStream {
         config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
         // MongoDB konekcija
         String mongoUri = System.getenv().getOrDefault("MONGO_URI", "mongodb://admin:admin@mongodb:27017");
@@ -74,6 +76,9 @@ public class PopularGamingKeywordsStream {
 
         MongoClient mongoClient = MongoClients.create(mongoUri);
         MongoDatabase database = mongoClient.getDatabase(mongoDbName);
+
+        MongoIndexManager.ensureIndexes(database, mongoCollectionName);
+        
         MongoCollection<Document> collection = database.getCollection(mongoCollectionName);
 
         StreamsBuilder builder = new StreamsBuilder();
@@ -94,7 +99,7 @@ public class PopularGamingKeywordsStream {
         KStream<String, Document> ytProcessed = ytStream.peek((key, value) -> {
             long currentCount = ytMessageCount.incrementAndGet();
             if (currentCount % 500 == 0 || currentCount == 10467) {
-                System.out.println("[YouTube Progress] Pročitano poruka: " + currentCount + " / 10467");
+                System.out.println("[YouTube Progress] Pročitano poruka: " + currentCount);
             }
         }).flatMap((key, value) -> {
             java.util.List<KeyValue<String, Document>> result = new java.util.ArrayList<>();
@@ -121,7 +126,7 @@ public class PopularGamingKeywordsStream {
         KStream<String, Document> ttProcessed = ttStream.peek((key, value) -> {
             long currentCount = ttMessageCount.incrementAndGet();
             if (currentCount % 2000 == 0 || currentCount == 43338) {
-                System.out.println("[TikTok Progress] Pročitano poruka: " + currentCount + " / 43338");
+                System.out.println("[TikTok Progress] Pročitano poruka: " + currentCount);
             }
         }).flatMap((key, value) -> {
             java.util.List<KeyValue<String, Document>> result = new java.util.ArrayList<>();
@@ -151,7 +156,7 @@ public class PopularGamingKeywordsStream {
         // Spajanje tokova
         KStream<String, Document> mergedStream = ytProcessed.merge(ttProcessed);
 
-        // Korišćenje Processor API-ja sa baferovanjem i Punctuator-om za batch upis
+        // Korišćenje Processor API-ja sa baferovanjem i batch upis
         mergedStream.process(new ProcessorSupplier<String, Document, Void, Void>() {
             @Override
             public Processor<String, Document, Void, Void> get() {
@@ -251,7 +256,7 @@ public class PopularGamingKeywordsStream {
 
                     @Override
                     public void close() {
-                        // Osiguravamo da se pre gašenja aplikacije upiše preostali sadržaj iz bafera
+                        // Osiguravanje da se pre gašenja aplikacije upiše preostali sadržaj iz bafera
                         flushBatchToMongo();
                     }
                 };

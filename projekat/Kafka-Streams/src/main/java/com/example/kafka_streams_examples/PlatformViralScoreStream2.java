@@ -1,5 +1,6 @@
 package com.example.kafka_streams_examples;
 
+import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -65,15 +66,20 @@ public class PlatformViralScoreStream2 {
         String trendingInternalTopic = System.getenv().getOrDefault("TRENDING_INTERNAL_TOPIC",
                 "canonical-trending-agg");
 
-        Properties props = new Properties();
-        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "stream-processor-platform-viral-v1");
-        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
-        props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
-        props.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
+        Properties config = new Properties();
+        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "stream-processor-platform-viral-v1");
+        config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+        config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+        config.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
+        config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
         MongoClient mongoClient = MongoClients.create(mongoUri);
         MongoDatabase database = mongoClient.getDatabase(mongoDbName);
+
+        MongoIndexManager.ensureIndexes(database, mongoCollectionName);
+        MongoIndexManager.ensureIndexes(database, mongoGrowthCollectionName);
+
         MongoCollection<Document> collection = database.getCollection(mongoCollectionName);
         MongoCollection<Document> growthCollection = database.getCollection(mongoGrowthCollectionName);
 
@@ -260,7 +266,7 @@ public class PlatformViralScoreStream2 {
         });
 
         Topology topology = builder.build();
-        KafkaStreams streams = new KafkaStreams(topology, props);
+        KafkaStreams streams = new KafkaStreams(topology, config);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             streams.close();

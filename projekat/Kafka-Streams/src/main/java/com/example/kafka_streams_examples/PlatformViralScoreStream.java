@@ -1,5 +1,6 @@
 package com.example.kafka_streams_examples;
 
+import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mongodb.client.MongoClient;
@@ -16,6 +17,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Properties;
 
 public class PlatformViralScoreStream {
@@ -28,15 +30,19 @@ public class PlatformViralScoreStream {
         String mongoDbName = System.getenv().getOrDefault("MONGO_DB", "realtime_data");
         String mongoCollectionName = System.getenv().getOrDefault("MONGO_COLLECTION", "query_platform_viral_metrics");
 
-        Properties props = new Properties();
-        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "stream-processor-platform-viral-v1");
-        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
-        props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
-        props.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
+        Properties config = new Properties();
+        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "stream-processor-platform-viral-v3");
+        config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+        config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+        config.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
+        config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
         MongoClient mongoClient = MongoClients.create(mongoUri);
         MongoDatabase database = mongoClient.getDatabase(mongoDbName);
+
+        MongoIndexManager.ensureIndexes(database, mongoCollectionName);
+        
         MongoCollection<Document> collection = database.getCollection(mongoCollectionName);
 
         StreamsBuilder builder = new StreamsBuilder();
@@ -52,9 +58,10 @@ public class PlatformViralScoreStream {
 
         // Spajanje i obrada oba streama
         KStream<String, PlatformMetrics> allMapped = ytMapped.merge(ttMapped)
-                .filter((k, v) -> v != null && !k.equals("ERROR"));
+                .filter((k, v) -> v != null && !k.startsWith("ERROR"));
 
-        // Grupisanje po složenom ključu: tema_platforma (npr. "roblox_youtube")
+        // Grupisanje po složenom ključu sa datumom: tema_platforma_datum (npr.
+        // "roblox_youtube_2026-07-26")
         KTable<String, PlatformMetrics> aggregatedTable = allMapped
                 .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(PlatformMetrics.class)))
                 .reduce((aggValue, newValue) -> {
@@ -63,8 +70,7 @@ public class PlatformViralScoreStream {
                     return new PlatformMetrics(
                             newValue.theme,
                             newValue.platform,
-                            newValue.day,
-                            newValue.epochDay,
+                            newValue.date,
                             newViralSum,
                             newCount);
                 });
@@ -72,13 +78,11 @@ public class PlatformViralScoreStream {
         aggregatedTable.toStream().foreach((key, value) -> {
             try {
                 double avgViralScore = value.count > 0 ? value.viralScoreSum / value.count : 0.0;
-                long currentEpochDay = LocalDate.now().toEpochDay();
 
-                // Upis u MongoDB sa upsert opcijom po temi, platformi i danu
+                // Upis u MongoDB sa upsert opcijom po temi, platformi i datumu
                 Document doc = new Document("topic", value.theme)
                         .append("platform", value.platform)
-                        .append("day", value.day)
-                        .append("epoch_day", currentEpochDay)
+                        .append("date", value.date)
                         .append("avg_viral_score", avgViralScore)
                         .append("total_records", value.count);
 
@@ -86,19 +90,19 @@ public class PlatformViralScoreStream {
                         com.mongodb.client.model.Filters.and(
                                 com.mongodb.client.model.Filters.eq("topic", value.theme),
                                 com.mongodb.client.model.Filters.eq("platform", value.platform),
-                                com.mongodb.client.model.Filters.eq("day", value.day)),
+                                com.mongodb.client.model.Filters.eq("date", value.date)),
                         new Document("$set", doc),
                         new UpdateOptions().upsert(true));
 
-                log.info("Platforma: {}, Tema: {}, Dan: {}, Prosečan viral score: {}",
-                        value.platform, value.theme, value.day, avgViralScore);
+                log.info("Platforma: {}, Tema: {}, Datum: {}, Prosečan viral score: {}",
+                        value.platform, value.theme, value.date, avgViralScore);
             } catch (Exception e) {
                 log.error("Greška pri upisu u MongoDB za temu: {}", value.theme, e);
             }
         });
 
         Topology topology = builder.build();
-        KafkaStreams streams = new KafkaStreams(topology, props);
+        KafkaStreams streams = new KafkaStreams(topology, config);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             streams.close();
@@ -125,31 +129,38 @@ public class PlatformViralScoreStream {
 
             String canonicalTheme = mapToCanonicalTheme(rawTag);
 
-            int day = 1;
-            long epochDay = LocalDate.now().toEpochDay();
-            String timeField = node.has("publish_time") ? node.get("publish_time").asText()
-                    : (node.has("published_at") ? node.get("published_at").asText()
-                            : (node.has("trending_detected_time") ? node.get("trending_detected_time").asText()
-                                    : null));
+            // Ekstrakcija datuma zavisno od platforme
+            String timeField = null;
+            if ("youtube".equals(platform)) {
+                if (node.has("collected_at")) {
+                    timeField = node.get("collected_at").asText();
+                }
+            } else if ("tiktok".equals(platform)) {
+                if (node.has("trending_detected_time")) {
+                    timeField = node.get("trending_detected_time").asText();
+                }
+            }
 
+            // TODO: Možda izbaciti LocalDate.now(), pa ukoliko timeField ne postoji, da se ta poruka prebaci u ERROR.
+            String dateStr = LocalDate.now().toString();
             if (timeField != null) {
                 try {
                     OffsetDateTime odt = OffsetDateTime.parse(timeField);
-                    day = odt.getDayOfMonth();
-                    epochDay = odt.toLocalDate().toEpochDay();
+                    dateStr = odt.toLocalDate().format(DateTimeFormatter.ISO_LOCAL_DATE);
                 } catch (Exception ignored) {
                 }
             }
 
             double viralScore = node.has("viral_score") ? node.get("viral_score").asDouble(0.0) : 0.0;
 
-            String streamKey = canonicalTheme + "_" + platform;
+            // Ključ sada sadrži i datum kako bi se podaci particionisali i čuvali po danima
+            String streamKey = canonicalTheme + "_" + platform + "_" + dateStr;
 
             return KeyValue.pair(streamKey,
-                    new PlatformMetrics(canonicalTheme, platform, day, epochDay, viralScore, 1));
+                    new PlatformMetrics(canonicalTheme, platform, dateStr, viralScore, 1));
         } catch (Exception e) {
             log.error("Greška pri parsiranju poruke sa platforme {}: {}", platform, value, e);
-            return KeyValue.pair("ERROR", null);
+            return KeyValue.pair("ERROR_" + System.currentTimeMillis(), null);
         }
     }
 
@@ -300,20 +311,17 @@ public class PlatformViralScoreStream {
     public static class PlatformMetrics {
         public String theme;
         public String platform;
-        public int day;
-        public long epochDay;
+        public String date;
         public double viralScoreSum;
         public long count;
 
         public PlatformMetrics() {
         }
 
-        public PlatformMetrics(String theme, String platform, int day, long epochDay, double viralScoreSum,
-                long count) {
+        public PlatformMetrics(String theme, String platform, String date, double viralScoreSum, long count) {
             this.theme = theme;
             this.platform = platform;
-            this.day = day;
-            this.epochDay = epochDay;
+            this.date = date;
             this.viralScoreSum = viralScoreSum;
             this.count = count;
         }

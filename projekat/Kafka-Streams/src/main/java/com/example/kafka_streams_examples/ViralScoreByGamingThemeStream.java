@@ -1,5 +1,6 @@
 package com.example.kafka_streams_examples;
 
+import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,7 +19,6 @@ import org.apache.kafka.common.serialization.Serializer;
 import org.apache.kafka.streams.*;
 import org.apache.kafka.streams.kstream.*;
 import org.apache.kafka.streams.state.KeyValueStore;
-import org.apache.kafka.streams.state.Stores;
 import org.bson.Document;
 
 import java.util.ArrayList;
@@ -95,6 +95,7 @@ public class ViralScoreByGamingThemeStream {
         config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         config.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
+        config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
         // MongoDB konekcija
         String mongoUri = System.getenv().getOrDefault("MONGO_URI", "mongodb://admin:admin@mongodb:27017");
@@ -103,19 +104,19 @@ public class ViralScoreByGamingThemeStream {
 
         MongoClient mongoClient = MongoClients.create(mongoUri);
         MongoDatabase database = mongoClient.getDatabase(mongoDbName);
+
+        MongoIndexManager.ensureIndexes(database, mongoCollectionName);
+
         MongoCollection<Document> collection = database.getCollection(mongoCollectionName);
 
         StreamsBuilder builder = new StreamsBuilder();
 
-        // Broјачи за праћење броја обрађених сирових порука по топику
         AtomicLong ytMessageCounter = new AtomicLong(0);
         AtomicLong ttMessageCounter = new AtomicLong(0);
 
-        // Čitanje sa YouTube i TikTok topika
         KStream<String, String> ytStream = builder.stream("yt-monitoring-topic");
         KStream<String, String> ttStream = builder.stream("tt-monitoring-topic");
 
-        // Mapiranje YouTube poruka
         KStream<String, Document> ytProcessed = ytStream.flatMap((key, value) -> {
             List<KeyValue<String, Document>> result = new ArrayList<>();
             try {
@@ -142,7 +143,6 @@ public class ViralScoreByGamingThemeStream {
             return result;
         });
 
-        // Mapiranje TikTok poruka
         KStream<String, Document> ttProcessed = ttStream.flatMap((key, value) -> {
             List<KeyValue<String, Document>> result = new ArrayList<>();
             try {
@@ -168,7 +168,6 @@ public class ViralScoreByGamingThemeStream {
             return result;
         });
 
-        // Spajanje tokova i primena DSL agregције са нормализацијом тема
         KStream<String, Document> mergedStream = ytProcessed.merge(ttProcessed);
 
         KTable<String, DetailedScoreAggregation> aggregatedThemes = mergedStream
@@ -201,7 +200,6 @@ public class ViralScoreByGamingThemeStream {
                                 .withKeySerde(Serdes.String())
                                 .withValueSerde(new JsonSerde<>(DetailedScoreAggregation.class)));
 
-        // Sinhronizacija iz KTable u MongoDB i periodični ispis бројача u konzolu
         aggregatedThemes.toStream().foreach((aggKey, aggregation) -> {
             try {
                 if (aggregation == null || aggregation.theme == null)
@@ -226,7 +224,6 @@ public class ViralScoreByGamingThemeStream {
                 long totalYt = ytMessageCounter.get();
                 long totalTt = ttMessageCounter.get();
 
-                // Štampanje statusa u konzolu na svakih 1000 ukupno obrađenih poruka
                 if ((totalYt + totalTt) % 1000 == 0) {
                     System.out.println(
                             "Pročitano poruka -> YouTube [yt-monitoring-topic]: " + totalYt +

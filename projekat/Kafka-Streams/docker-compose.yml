@@ -24,6 +24,8 @@ services:
         "com.example.kafka_streams_examples.ViralScoreByGamingThemeStream",
       ]
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q1-state:/app/kafka-streams
 
   stream-processor-q2:
     build:
@@ -45,6 +47,8 @@ services:
         "com.example.kafka_streams_examples.ViewsByThemeTimelineStream",
       ]
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q2-state:/app/kafka-streams
 
   stream-processor-q3:
     build:
@@ -67,6 +71,8 @@ services:
         "com.example.kafka_streams_examples.PopularGamingKeywordsStream",
       ]
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q3-state:/app/kafka-streams
 
   stream-processor-q4:
     build:
@@ -95,6 +101,8 @@ services:
         reservations:
           memory: 256M
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q4-state:/app/kafka-streams
 
   stream-processor-q5:
     build:
@@ -116,6 +124,8 @@ services:
         "com.example.kafka_streams_examples.PlatformOverlapHeatmapStream",
       ]
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q5-state:/app/kafka-streams
 
   stream-processor-q6:
     build:
@@ -144,6 +154,8 @@ services:
         reservations:
           memory: 256M
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q6-state:/app/kafka-streams
 
   stream-processor-q7:
     build:
@@ -165,6 +177,8 @@ services:
         "com.example.kafka_streams_examples.SocialMediaEngagementStream",
       ]
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q7-state:/app/kafka-streams
 
   stream-processor-q8:
     build:
@@ -186,6 +200,8 @@ services:
         "com.example.kafka_streams_examples.SocialMediaDayTypeEngagementStream",
       ]
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q8-state:/app/kafka-streams
 
   stream-processor-q9:
     build:
@@ -214,6 +230,8 @@ services:
         reservations:
           memory: 256M
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q9-state:/app/kafka-streams
 
   stream-processor-q99:
     build:
@@ -242,6 +260,8 @@ services:
         reservations:
           memory: 256M
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q99-state:/app/kafka-streams
 
   stream-processor-q992:
     build:
@@ -271,6 +291,8 @@ services:
         reservations:
           memory: 256M
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q992-state:/app/kafka-streams
 
   stream-processor-q10:
     build:
@@ -299,3 +321,19 @@ services:
         reservations:
           memory: 256M
     restart: unless-stopped
+    volumes:
+      - kafka-streams-q10-state:/app/kafka-streams
+
+volumes:
+  kafka-streams-q1-state:
+  kafka-streams-q2-state:
+  kafka-streams-q3-state:
+  kafka-streams-q4-state:
+  kafka-streams-q5-state:
+  kafka-streams-q6-state:
+  kafka-streams-q7-state:
+  kafka-streams-q8-state:
+  kafka-streams-q9-state:
+  kafka-streams-q99-state:
+  kafka-streams-q992-state:
+  kafka-streams-q10-state:

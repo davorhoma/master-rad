@@ -1,5 +1,6 @@
 package com.example.kafka_streams_examples;
 
+import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -97,6 +98,7 @@ public class ViewsByThemeTimelineStream {
         config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         config.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
+        config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
         String mongoUri = System.getenv().getOrDefault("MONGO_URI", "mongodb://admin:admin@mongodb:27017");
         String mongoDbName = System.getenv().getOrDefault("MONGO_DB", "realtime_data");
@@ -104,6 +106,9 @@ public class ViewsByThemeTimelineStream {
 
         MongoClient mongoClient = MongoClients.create(mongoUri);
         MongoDatabase database = mongoClient.getDatabase(mongoDbName);
+
+        MongoIndexManager.ensureIndexes(database, mongoCollectionName);
+        
         MongoCollection<Document> collection = database.getCollection(mongoCollectionName);
 
         StreamsBuilder builder = new StreamsBuilder();
@@ -173,7 +178,7 @@ public class ViewsByThemeTimelineStream {
 
         KStream<String, Document> mergedStream = ytProcessed.merge(ttProcessed);
 
-        // Agregacija po platformi, kanonskoj temi i datumu iz payload-a
+        // Agregacija po platformi, temi i datumu iz payload-a
         KTable<String, DetailedViewsAggregation> aggregatedThemesTimeline = mergedStream
                 .map((key, doc) -> {
                     String platform = doc.getString("platform");
