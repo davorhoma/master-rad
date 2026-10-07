@@ -27,7 +27,7 @@ def transform_raw_data():
             conn_id="SPARK_CONNECTION",
             application_args=[
                 "{{ var.value.HDFS_DEFAULT_FS }}/data/tiktok_enriched_data.csv",
-                "{{ var.value.HDFS_DEFAULT_FS }}/transformed_enriched_tiktok_data",
+                "{{ var.value.HDFS_DEFAULT_FS }}/transformed_tiktok_data",
             ],
         )
 
