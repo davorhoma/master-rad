@@ -99,6 +99,8 @@ x-airflow-common:
 services:
   airflow-postgres:
     image: postgres:17.7
+    mem_limit: 512m
+    mem_reservation: 128m
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
@@ -119,6 +121,8 @@ services:
     # Redis is limited to 7.2-bookworm due to licencing change
     # https://redis.io/blog/redis-adopts-dual-source-available-licensing/
     image: redis:7.2-bookworm
+    mem_limit: 256m
+    mem_reservation: 32m
     expose:
       - 6379
     healthcheck:
@@ -134,6 +138,8 @@ services:
   airflow-apiserver:
     <<: *airflow-common
     command: api-server
+    mem_limit: 768m
+    mem_reservation: 384m
     ports:
       - "8080:8080"
     healthcheck:
@@ -151,6 +157,8 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
+    mem_limit: 768m
+    mem_reservation: 384m
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
       interval: 30s
@@ -166,6 +174,8 @@ services:
   airflow-dag-processor:
     <<: *airflow-common
     command: dag-processor
+    mem_limit: 768m
+    mem_reservation: 384m
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
       interval: 30s
@@ -186,6 +196,8 @@ services:
   airflow-worker:
     <<: *airflow-common
     command: celery worker
+    mem_limit: 1g
+    mem_reservation: 512m
     healthcheck:
       # yamllint disable rule:line-length
       test:
@@ -199,6 +211,7 @@ services:
       <<: *airflow-common-env
       # Required to handle warm shutdown of the celery workers properly
       # See https://airflow.apache.org/docs/docker-stack/entrypoint.html#signal-propagation
+      AIRFLOW__CELERY__WORKER_CONCURRENCY: "2"
       DUMB_INIT_SETSID: "0"
     restart: always
     depends_on:
@@ -211,6 +224,8 @@ services:
   airflow-triggerer:
     <<: *airflow-common
     command: triggerer
+    mem_limit: 768m
+    mem_reservation: 384m
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
       interval: 30s

@@ -7,6 +7,8 @@ services:
   spark-master:
     image: apache/spark:3.5.3
     container_name: spark-master
+    mem_limit: 1g
+    cpus: 1.0
     user: root
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
@@ -28,10 +30,12 @@ services:
   spark-worker-1:
     image: apache/spark:3.5.3
     container_name: spark-worker-1
+    mem_limit: 2g
+    cpus: 1.0
     user: root
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
-      spark://spark-master:7077 --webui-port 8081 --cores 4 --memory 4g
+      spark://spark-master:7077 --webui-port 8081 --cores 1 --memory 1700m
     depends_on:
       - spark-master
     environment:
@@ -50,10 +54,12 @@ services:
   spark-worker-2:
     image: apache/spark:3.5.3
     container_name: spark-worker-2
+    mem_limit: 2g
+    cpus: 1.0
     user: root
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
-      spark://spark-master:7077 --webui-port 8081 --cores 4 --memory 4g
+      spark://spark-master:7077 --webui-port 8081 --cores 1 --memory 1700m
     depends_on:
       - spark-master
     environment:

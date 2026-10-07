@@ -8,6 +8,9 @@ services:
     image: postgres:17.7
     container_name: superset-postgres
 
+    mem_limit: 512m
+    mem_reservation: 128m
+
     environment:
       POSTGRES_USER: superset
       POSTGRES_PASSWORD: superset
@@ -29,6 +32,9 @@ services:
     image: redis:7-alpine
     container_name: superset-redis
 
+    mem_limit: 256m
+    mem_reservation: 32m
+
     networks:
       - yt-tt-analysis
 
@@ -44,6 +50,9 @@ services:
       dockerfile: Dockerfile
 
     container_name: superset
+
+    mem_limit: 2g
+    mem_reservation: 768m
 
     ports:
       - "8088:8088"
@@ -88,8 +97,8 @@ services:
 
         exec gunicorn \
           --bind 0.0.0.0:8088 \
-          --workers 4 \
+          --workers 1 \
           --worker-class gthread \
           --threads 2 \
-          --timeout 120 \
+          --timeout 300 \
           'superset.app:create_app()'

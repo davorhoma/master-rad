@@ -9,6 +9,7 @@ services:
   namenode:
     image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
     container_name: namenode
+    mem_limit: 1g
     ports:
       - 9870:9870
       - 9000:9000
@@ -25,6 +26,7 @@ services:
   datanode1:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
     container_name: datanode1
+    mem_limit: 1g
     volumes:
       - hadoop_datanode1:/hadoop/dfs/data
     environment:
@@ -37,6 +39,7 @@ services:
   datanode2:
     image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
     container_name: datanode2
+    mem_limit: 1g
     volumes:
       - hadoop_datanode2:/hadoop/dfs/data
     environment:

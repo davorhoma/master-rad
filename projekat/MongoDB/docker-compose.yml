@@ -7,6 +7,8 @@ services:
   mongodb:
     image: mongo:8.2.3-noble
     container_name: mongodb
+    mem_limit: 2g
+    cpus: 0.5
     ports:
       - 27017:27017
     environment:
@@ -17,15 +19,12 @@ services:
     networks:
       - yt-tt-analysis
     command: mongod --wiredTigerCacheSizeGB 1.0
-    deploy:
-      resources:
-        limits:
-          cpus: '0.50'
-          memory: 2GB
 
   mongo-express:
     image: mongo-express:1.0.0
     container_name: mongo-express
+    mem_limit: 256m
+    mem_reservation: 32m
     ports:
       - 8111:8081
     environment:

@@ -19,10 +19,17 @@ services:
     command:
       [
         "java",
+        "-Xmx512m",
         "-cp",
         "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
         "com.example.kafka_streams_examples.ViralScoreByGamingThemeStream",
       ]
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
     restart: unless-stopped
     volumes:
       - kafka-streams-q1-state:/app/kafka-streams
@@ -42,10 +49,17 @@ services:
     command:
       [
         "java",
+        "-Xmx512m",
         "-cp",
         "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
         "com.example.kafka_streams_examples.ViewsByThemeTimelineStream",
       ]
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
     restart: unless-stopped
     volumes:
       - kafka-streams-q2-state:/app/kafka-streams
@@ -70,6 +84,12 @@ services:
         "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
         "com.example.kafka_streams_examples.PopularGamingKeywordsStream",
       ]
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
     restart: unless-stopped
     volumes:
       - kafka-streams-q3-state:/app/kafka-streams
@@ -119,10 +139,17 @@ services:
     command:
       [
         "java",
+        "-Xmx512m",
         "-cp",
         "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
         "com.example.kafka_streams_examples.PlatformOverlapHeatmapStream",
       ]
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
     restart: unless-stopped
     volumes:
       - kafka-streams-q5-state:/app/kafka-streams
@@ -172,10 +199,17 @@ services:
     command:
       [
         "java",
+        "-Xmx512m",
         "-cp",
         "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
         "com.example.kafka_streams_examples.SocialMediaEngagementStream",
       ]
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
     restart: unless-stopped
     volumes:
       - kafka-streams-q7-state:/app/kafka-streams
@@ -195,33 +229,10 @@ services:
     command:
       [
         "java",
-        "-cp",
-        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
-        "com.example.kafka_streams_examples.SocialMediaDayTypeEngagementStream",
-      ]
-    restart: unless-stopped
-    volumes:
-      - kafka-streams-q8-state:/app/kafka-streams
-
-  stream-processor-q9:
-    build:
-      context: .
-    container_name: stream-processor-query-9
-    profiles: ["q9", "all"]
-    networks:
-      - yt-tt-analysis
-    environment:
-      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
-      MONGO_URI: "mongodb://admin:admin@mongodb:27017"
-      MONGO_DB: "realtime_data"
-      MONGO_COLLECTION: "query_9_emerging_topics_metrics"
-    command:
-      [
-        "java",
         "-Xmx512m",
         "-cp",
         "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
-        "com.example.kafka_streams_examples.EmergingTopicsStream",
+        "com.example.kafka_streams_examples.SocialMediaDayTypeEngagementStream",
       ]
     deploy:
       resources:
@@ -231,7 +242,37 @@ services:
           memory: 256M
     restart: unless-stopped
     volumes:
-      - kafka-streams-q9-state:/app/kafka-streams
+      - kafka-streams-q8-state:/app/kafka-streams
+
+  # stream-processor-q9:
+  #   build:
+  #     context: .
+  #   container_name: stream-processor-query-9
+  #   profiles: ["q9", "all"]
+  #   networks:
+  #     - yt-tt-analysis
+  #   environment:
+  #     BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+  #     MONGO_URI: "mongodb://admin:admin@mongodb:27017"
+  #     MONGO_DB: "realtime_data"
+  #     MONGO_COLLECTION: "query_9_emerging_topics_metrics"
+  #   command:
+  #     [
+  #       "java",
+  #       "-Xmx512m",
+  #       "-cp",
+  #       "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+  #       "com.example.kafka_streams_examples.EmergingTopicsStream",
+  #     ]
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 768M
+  #       reservations:
+  #         memory: 256M
+  #   restart: unless-stopped
+  #   volumes:
+  #     - kafka-streams-q9-state:/app/kafka-streams
 
   stream-processor-q99:
     build:
@@ -263,19 +304,19 @@ services:
     volumes:
       - kafka-streams-q99-state:/app/kafka-streams
 
-  stream-processor-q992:
+  stream-processor-q9:
     build:
       context: .
-    container_name: stream-processor-query-992
-    profiles: ["q992", "all"]
+    container_name: stream-processor-query-9
+    profiles: ["q9", "all"]
     networks:
       - yt-tt-analysis
     environment:
       BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
       MONGO_URI: "mongodb://admin:admin@mongodb:27017"
       MONGO_DB: "realtime_data"
-      MONGO_COLLECTION: "query_992_platform_viral_score"
-      MONGO_GROWTH_COLLECTION: "query_992_growth"
+      MONGO_COLLECTION: "query_9_platform_viral_score"
+      MONGO_GROWTH_COLLECTION: "query_9_growth"
     command:
       [
         "java",
@@ -292,7 +333,7 @@ services:
           memory: 256M
     restart: unless-stopped
     volumes:
-      - kafka-streams-q992-state:/app/kafka-streams
+      - kafka-streams-q9-state:/app/kafka-streams
 
   stream-processor-q10:
     build:
