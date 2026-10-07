@@ -5,9 +5,7 @@ ROW_LIMIT = 5000
 SECRET_KEY = "hK8#mP2$vL9@qR4_xT7*zW1!nB5-yC6&jF3%dH8"
 
 # PostgreSQL metadata database
-SQLALCHEMY_DATABASE_URI = (
-    "postgresql+psycopg2://superset:superset@superset-postgres:5432/superset"
-)
+SQLALCHEMY_DATABASE_URI = "postgresql+psycopg2://superset:superset@superset-postgres:5432/superset"
 
 # Redis
 REDIS_HOST = "superset-redis"

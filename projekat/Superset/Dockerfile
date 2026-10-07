@@ -2,6 +2,10 @@ FROM apache/superset:6.1.0
 
 USER root
 
-RUN uv pip install --python /app/.venv/bin/python --system psycopg2-binary pymongosql
+RUN uv pip install \
+    --python /app/.venv/bin/python \
+    --system \
+    psycopg2-binary \
+    "pymongosql>=0.7.4,<1"
 
 USER superset
