@@ -1,13 +1,12 @@
 from pyspark.sql import SparkSession, functions as F
 import sys
+import re
 
 # Konstantna vrednost za čišćenje ekstremnih vrednosti
 MAX_REALISTIC_VIEWS = 25_000_000_000
 
 
 def to_snake_case(name: str) -> str:
-    import re
-
     name = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
     name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
     return name.lower()
@@ -19,7 +18,7 @@ if __name__ == "__main__":
 
     spark = SparkSession.builder.appName("prepare_youtube_gaming_data").getOrCreate()
 
-    # Čitanje ulaznog CSV fajla na osnovu headera
+    # 1. Čitanje CSV fajla
     df = (
         spark.read.option("header", "true")
         .option("inferSchema", "true")
@@ -29,30 +28,63 @@ if __name__ == "__main__":
         .csv(input_file_path)
     )
 
-    # 1. Normalizacija naziva kolona u snake_case
+    YOUTUBE_COLUMNS = [
+        "video_id",
+        "title",
+        "publishedAt",
+        "channelId",
+        "channelTitle",
+        "trending_date",
+        "tags",
+        "view_count",
+        "likes",
+        "dislikes",
+        "comment_count",
+        "description",
+        "duration",
+    ]
+
+    df = df.select(*YOUTUBE_COLUMNS)
+
+    # 2. Normalizacija naziva kolona u snake_case
     df = df.select(*[F.col(c).alias(to_snake_case(c)) for c in df.columns])
 
-    # 2. Tipizacija podataka
+    # 3. Ujednačavanje naziva kolona
+    rename_columns = {
+        "view_count": "views",
+        "likes": "likes",
+        "comment_count": "comments",
+    }
+
+    for old_name, new_name in rename_columns.items():
+        if old_name != new_name and old_name in df.columns:
+            df = df.withColumnRenamed(old_name, new_name)
+
+    # 4. Tipizacija podataka i normalizacija vremena
     df = (
-        df.withColumn(
-            "trending_date", F.to_date("trending_date", "yy.dd.MM")
-        )  # Prilagodi format datuma po potrebi
-        .withColumn("published_at", F.to_timestamp("published_at"))
-        .withColumn("view_count", F.col("view_count").cast("long"))
+        df.withColumn("trending_date", F.to_date(F.col("trending_date"), "yy.dd.MM"))
+        .withColumn("published_at", F.to_timestamp(F.col("published_at")))
+        .withColumn("views", F.col("views").cast("long"))
         .withColumn("likes", F.col("likes").cast("long"))
         .withColumn("dislikes", F.col("dislikes").cast("long"))
-        .withColumn("comment_count", F.col("comment_count").cast("long"))
+        .withColumn("comments", F.col("comments").cast("long"))
     )
 
-    # 3. Čišćenje podataka
-    df = df.filter(F.col("view_count") <= MAX_REALISTIC_VIEWS)
+    # trending_date predstavlja vreme prikupljanja podataka
+    df = df.withColumnRenamed("trending_date", "collected_at").withColumn(
+        "platform", F.lit("YouTube")
+    )
 
-    # 4. Transformacija trajanja (ISO 8601 u sekunde)
-    # Koristi se za pitanja vezana za dužinu videa i kategorizaciju (do 5 min, 5-20 min, preko 20 min)
+    # 5. Čišćenje ekstremnih vrednosti
+    df = df.filter(
+        (F.col("views") > 0)
+        & (F.col("likes") <= F.col("views"))
+        & (F.col("views") <= MAX_REALISTIC_VIEWS)
+    )
+
+    # 6. Transformacija ISO 8601 trajanja u sekunde
     df = (
-        df.withColumn(
-            "duration_h", F.regexp_extract("duration", r"PT(\d+)H", 1).cast("int")
-        )
+        df.withColumn("duration_h", F.regexp_extract("duration", r"PT(\d+)H", 1).cast("int"))
         .withColumn(
             "duration_m",
             F.regexp_extract("duration", r"PT(?:\d+H)?(\d+)M", 1).cast("int"),
@@ -70,40 +102,37 @@ if __name__ == "__main__":
         .drop("duration_h", "duration_m", "duration_s", "duration")
     )
 
-    # 5. Priprema i obrada tagova (korisno za pitanja 7, 8 i 9)
-    df = df.withColumn("clean_tags", F.coalesce(F.col("tags"), F.lit("")))
-
-    df = df.withColumn("tag_array", F.split(F.col("clean_tags"), r"\|")).withColumn(
-        "tag_count",
+    # 7. Priprema tagova
+    # Izvorna kolona tags sadrži tekst; izlazna kolona tags je niz tagova.
+    df = df.withColumn(
+        "tags",
         F.when(
-            (F.col("tags") == "[none]") | (F.col("tags").isNull()), F.lit(0)
-        ).otherwise(F.size(F.split(F.col("clean_tags"), r"\|"))),
+            F.col("tags").isNull() | (F.col("tags") == "") | (F.col("tags") == "[none]"),
+            F.expr("cast(array() as array<string>)"),
+        ).otherwise(F.split(F.col("tags"), r"\|")),
     )
 
-    # 6. Dodavanje analitičkih metrika i 'viral_score'
+    df = df.withColumn("tag_count", F.size(F.col("tags")))
+
+    # 8. Dodavanje analitičkih metrika
     df = (
-        df.withColumn("safe_views", F.greatest(F.col("view_count"), F.lit(1)))
-        .withColumn(
-            "like_ratio", F.least(F.col("likes") / F.col("safe_views"), F.lit(1.0))
-        )
-        .withColumn(
-            "comment_ratio",
-            F.least(F.col("comment_count") / F.col("safe_views"), F.lit(1.0)),
-        )
+        df.withColumn("like_ratio", F.col("likes") / F.col("views"))
+        .withColumn("comment_ratio", F.col("comments") / F.col("views"))
+        .withColumn("engagement_rate", (F.col("likes") + F.col("comments")) / F.col("views"))
     )
 
-    # Izračunavanje viral_score metrike prema definiciji
+    # 9. Izračunavanje viral_score metrike
     df = df.withColumn(
         "viral_score",
         F.round(
-            F.log10(F.col("safe_views")) * 0.50
+            F.log10(F.col("views")) * 0.50
             + F.col("like_ratio") * 100 * 0.30
             + F.col("comment_ratio") * 100 * 0.20,
             4,
         ),
-    ).drop("safe_views")
+    )
 
-    # 7. Čuvanje pripremljenih podataka u Parquet formatu
+    # 10. Čuvanje u Parquet formatu
     df.write.mode("overwrite").parquet(output_path)
 
     print("Priprema YouTube Gaming podataka uspešno završena.")

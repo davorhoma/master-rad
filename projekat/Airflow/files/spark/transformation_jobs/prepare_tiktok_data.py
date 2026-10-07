@@ -4,13 +4,14 @@ import sys
 # Konstantna vrednost za čišćenje ekstremnih pregleda
 MAX_REALISTIC_PLAYS = 10_000_000_000
 
+
 if __name__ == "__main__":
     input_file_path = sys.argv[1]
     output_path = sys.argv[2]
 
     spark = SparkSession.builder.appName("prepare_tiktok_gaming_data").getOrCreate()
 
-    # Čitanje TikTok ulaznog CSV fajla
+    # Čitanje CSV fajla
     df = (
         spark.read.option("header", "true")
         .option("inferSchema", "true")
@@ -20,67 +21,104 @@ if __name__ == "__main__":
         .csv(input_file_path)
     )
 
-    # 1. Tipizacija podataka
-    # Na TikTok-u su pregledi pod nazivom play_count, lajkovi kao digg_count, a komentari comment_count
+    TIKTOK_COLUMNS = [
+        "id",
+        "collected_time",
+        "create_time",
+        "desc",
+        "comment_count",
+        "digg_count",
+        "play_count",
+        "share_count",
+        "duration",
+        "user_id",
+        "challenges",
+        "url",
+        "keyword",
+        "author_name",
+        "author_unique_id",
+    ]
+
+    df = df.select(*TIKTOK_COLUMNS)
+
+    # Ujednačavanje naziva kolona
+    rename_columns = {
+        "id": "video_id",
+        "collected_time": "collected_at",
+        "create_time": "published_at",
+        "desc": "description",
+        "comment_count": "comments",
+        "digg_count": "likes",
+        "play_count": "views",
+        "share_count": "shares",
+        "duration": "duration_seconds",
+        "user_id": "channel_id",
+        "challenges": "tags",
+        "author_name": "channel_title",
+        "author_unique_id": "username",
+    }
+
+    for old_name, new_name in rename_columns.items():
+        if old_name != new_name and old_name in df.columns:
+            df = df.withColumnRenamed(old_name, new_name)
+
+    # Tipizacija podataka
+    # Vremenske kolone su Unix timestamp izražene u sekundama.
     df = (
         df.withColumn(
-            "create_time", F.to_timestamp(F.col("create_time").cast("long"))
-        )  # Ako je timestamp u sekundama, ako ne, prilagoditi format
-        .withColumn(
-            "collected_time", F.to_timestamp(F.col("collected_time").cast("long"))
+            "published_at",
+            F.to_timestamp(F.from_unixtime(F.col("published_at").cast("long"))),
         )
-        .withColumn("play_count", F.col("play_count").cast("long"))
         .withColumn(
-            "digg_count", F.col("digg_count").cast("long")
-        )  # Lajkovi na TikToku
-        .withColumn("comment_count", F.col("comment_count").cast("long"))
-        .withColumn("share_count", F.col("share_count").cast("long"))
-        .withColumn("collect_count", F.col("collect_count").cast("long"))
-        .withColumn(
-            "duration", F.col("duration").cast("int")
-        )  # Na TikToku je duration već u sekundama (int)
+            "collected_at",
+            F.to_timestamp(F.from_unixtime(F.col("collected_at").cast("long"))),
+        )
+        .withColumn("views", F.col("views").cast("long"))
+        .withColumn("likes", F.col("likes").cast("long"))
+        .withColumn("comments", F.col("comments").cast("long"))
+        .withColumn("shares", F.col("shares").cast("long"))
+        .withColumn("duration_seconds", F.col("duration_seconds").cast("int"))
+        .withColumn("platform", F.lit("TikTok"))
     )
 
-    # 2. Čišćenje podataka
-    df = df.filter(F.col("play_count") <= MAX_REALISTIC_PLAYS)
+    # Čišćenje ekstremnih vrednosti
+    df = df.filter(
+        (F.col("views") > 0)
+        & (F.col("likes") <= F.col("views"))
+        & (F.col("views") <= MAX_REALISTIC_PLAYS)
+    )
 
-    # 3. Priprema i obrada izazova/tagova (značajno za TikTok pitanja o tagovima)
-    # Kolona 'challenges' sadrži hashtagove
-    df = df.withColumn("clean_challenges", F.coalesce(F.col("challenges"), F.lit("")))
-
+    # Priprema hashtagova
+    # Kolona 'tags' sadrži hashtagove razdvojene zarezima.
     df = df.withColumn(
-        "tag_array", F.split(F.col("clean_challenges"), r",")
-    ).withColumn(
-        "tag_count",
+        "tags",
         F.when(
-            (F.col("challenges") == "") | (F.col("challenges").isNull()), F.lit(0)
-        ).otherwise(F.size(F.split(F.col("clean_challenges"), r","))),
+            F.col("tags").isNull() | (F.trim(F.col("tags")) == ""),
+            F.expr("cast(array() as array<string>)"),
+        ).otherwise(F.split(F.col("tags"), r",")),
     )
 
-    # 4. Dodavanje analitičkih metrika i 'viral_score' prilagođenog za TikTok
+    df = df.withColumn("tag_count", F.size(F.col("tags")))
+
+    # Dodavanje analitičkih metrika
     df = (
-        df.withColumn("safe_plays", F.greatest(F.col("play_count"), F.lit(1)))
-        .withColumn(
-            "like_ratio", F.least(F.col("digg_count") / F.col("safe_plays"), F.lit(1.0))
-        )
-        .withColumn(
-            "comment_ratio",
-            F.least(F.col("comment_count") / F.col("safe_plays"), F.lit(1.0)),
-        )
+        df.withColumn("like_ratio", F.col("likes") / F.col("views"))
+        .withColumn("comment_ratio", F.col("comments") / F.col("views"))
+        .withColumn("engagement_rate", (F.col("likes") + F.col("comments")) / F.col("views"))
     )
 
     # Izračunavanje viral_score metrike
     df = df.withColumn(
         "viral_score",
         F.round(
-            F.log10(F.col("safe_plays")) * 0.50
+            F.log10(F.col("views")) * 0.50
             + F.col("like_ratio") * 100 * 0.30
             + F.col("comment_ratio") * 100 * 0.20,
             4,
         ),
-    ).drop("safe_plays")
+    )
 
-    # 5. Čuvanje pripremljenih podataka u Parquet formatu
+    # Čuvanje u Parquet formatu
     df.write.mode("overwrite").parquet(output_path)
 
     print("Priprema TikTok Gaming podataka uspešno završena.")
