@@ -19,6 +19,7 @@ from scrapers.tt_scraper import main as tt_monitoring_scraper
 from scrapers.yt_scraper import main as yt_monitoring_scraper
 from scrapers.yt_query_scraper1 import main as yt_query_scraper1
 from scrapers.yt_query_scraper2 import main as yt_query_scraper2
+from scrapers.join_datasets import join_scraped_data
 
 
 def _get_last_sent_index(state_file_path):
@@ -119,6 +120,15 @@ def scrape_tiktok_search():
     tt_playwright_scraper2()
 
 
+def join_scraped_datasets():
+    return join_scraped_data(
+        tiktok_monitoring_file=TIKTOK_MONITORING_OUTPUT_FILE,
+        tiktok_search_file=TIKTOK_SEARCH_OUTPUT_FILE,
+        youtube_monitoring_file=YOUTUBE_MONITORING_OUTPUT_FILE,
+        youtube_search_file=YOUTUBE_SEARCH_OUTPUT_FILE,
+    )
+
+
 TIKTOK_MONITORING_OUTPUT_FILE = os.getenv(
     "TIKTOK_APIFY_OUTPUT_FILE", "apify_spojeno.csv"
 )
@@ -194,6 +204,11 @@ with DAG(
         python_callable=scrape_tiktok_search,
     )
 
+    t_join_datasets = PythonOperator(
+        task_id="join_scraped_datasets",
+        python_callable=join_scraped_datasets,
+    )
+
     t_send_yt_mon = PythonOperator(
         task_id="send_yt_monitoring_to_kafka",
         python_callable=send_yt_monitoring_to_kafka,
@@ -214,11 +229,11 @@ with DAG(
         python_callable=send_tt_search_to_kafka,
     )
 
-    # Sva 4 skrejpera rade u paraleli i svaki od njih pokreće svoj Kafka producer task
-    t_yt_mon >> t_send_yt_mon
-    t_tt_mon >> t_send_tt_mon
-    t_yt_search >> t_send_yt_search
-    t_tt_search >> t_send_tt_search
-    # scrapers = [t_yt_mon, t_tt_mon, t_yt_search, t_tt_search]
-    # kafka_senders = [t_send_yt_mon, t_send_tt_mon, t_send_yt_search, t_send_tt_search]
-    # kafka_senders
+    # Scraperi se izvršavaju paralelno; spajanje čeka sva četiri izvora.
+    [t_yt_mon, t_tt_mon, t_yt_search, t_tt_search] >> t_join_datasets
+    t_join_datasets >> [
+        t_send_yt_mon,
+        t_send_tt_mon,
+        t_send_yt_search,
+        t_send_tt_search,
+    ]

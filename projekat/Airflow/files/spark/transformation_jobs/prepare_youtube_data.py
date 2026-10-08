@@ -1,15 +1,8 @@
 from pyspark.sql import SparkSession, functions as F
 import sys
-import re
 
 # Konstantna vrednost za čišćenje ekstremnih vrednosti
 MAX_REALISTIC_VIEWS = 25_000_000_000
-
-
-def to_snake_case(name: str) -> str:
-    name = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
-    name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
-    return name.lower()
 
 
 if __name__ == "__main__":
@@ -31,48 +24,39 @@ if __name__ == "__main__":
     YOUTUBE_COLUMNS = [
         "video_id",
         "title",
-        "publishedAt",
-        "channelId",
-        "channelTitle",
-        "trending_date",
+        "published_at",
+        "channel_id",
+        "channel_title",
+        "collected_at",
         "tags",
-        "view_count",
+        "views",
         "likes",
-        "dislikes",
-        "comment_count",
+        "comments",
         "description",
         "duration",
+        "source_type",
+        "region_code",
+        "category_id",
+        "viral_score",
     ]
 
     df = df.select(*YOUTUBE_COLUMNS)
 
-    # 2. Normalizacija naziva kolona u snake_case
-    df = df.select(*[F.col(c).alias(to_snake_case(c)) for c in df.columns])
-
-    # 3. Ujednačavanje naziva kolona
-    rename_columns = {
-        "view_count": "views",
-        "likes": "likes",
-        "comment_count": "comments",
-    }
-
-    for old_name, new_name in rename_columns.items():
-        if old_name != new_name and old_name in df.columns:
-            df = df.withColumnRenamed(old_name, new_name)
-
-    # 4. Tipizacija podataka i normalizacija vremena
+    # Normalize joined-source timestamps and numeric fields.
     df = (
-        df.withColumn("trending_date", F.to_date(F.col("trending_date"), "yy.dd.MM"))
+        df.withColumn("collected_at", F.to_timestamp(F.col("collected_at")))
         .withColumn("published_at", F.to_timestamp(F.col("published_at")))
         .withColumn("views", F.col("views").cast("long"))
         .withColumn("likes", F.col("likes").cast("long"))
-        .withColumn("dislikes", F.col("dislikes").cast("long"))
         .withColumn("comments", F.col("comments").cast("long"))
     )
 
-    # trending_date predstavlja vreme prikupljanja podataka
-    df = df.withColumnRenamed("trending_date", "collected_at").withColumn(
-        "platform", F.lit("YouTube")
+    df = (
+        df.withColumn("trending_date", F.to_date(F.col("collected_at")))
+        .withColumn("view_count", F.col("views"))
+        .withColumn("comment_count", F.col("comments"))
+        .withColumn("dislikes", F.lit(None).cast("long"))
+        .withColumn("platform", F.lit("YouTube"))
     )
 
     # 5. Čišćenje ekstremnih vrednosti
@@ -82,24 +66,50 @@ if __name__ == "__main__":
         & (F.col("views") <= MAX_REALISTIC_VIEWS)
     )
 
-    # 6. Transformacija ISO 8601 trajanja u sekunde
+    # Convert ISO 8601 duration values into seconds.
     df = (
-        df.withColumn("duration_h", F.regexp_extract("duration", r"PT(\d+)H", 1).cast("int"))
+        df.withColumn("duration_h_text", F.regexp_extract("duration", r"PT(\d+)H", 1))
+        .withColumn(
+            "duration_m_text",
+            F.regexp_extract("duration", r"PT(?:\d+H)?(\d+)M", 1),
+        )
+        .withColumn(
+            "duration_s_text",
+            F.regexp_extract("duration", r"PT(?:\d+H)?(?:\d+M)?(\d+)S", 1),
+        )
+        .withColumn(
+            "duration_h",
+            F.when(F.col("duration_h_text") == "", 0).otherwise(
+                F.col("duration_h_text").cast("int")
+            ),
+        )
         .withColumn(
             "duration_m",
-            F.regexp_extract("duration", r"PT(?:\d+H)?(\d+)M", 1).cast("int"),
+            F.when(F.col("duration_m_text") == "", 0).otherwise(
+                F.col("duration_m_text").cast("int")
+            ),
         )
         .withColumn(
             "duration_s",
-            F.regexp_extract("duration", r"PT(?:\d+H)?(?:\d+M)?(\d+)S", 1).cast("int"),
+            F.when(F.col("duration_s_text") == "", 0).otherwise(
+                F.col("duration_s_text").cast("int")
+            ),
         )
         .withColumn(
             "duration_seconds",
-            F.coalesce(F.col("duration_h"), F.lit(0)) * 3600
-            + F.coalesce(F.col("duration_m"), F.lit(0)) * 60
-            + F.coalesce(F.col("duration_s"), F.lit(0)),
+            F.col("duration_h") * 3600
+            + F.col("duration_m") * 60
+            + F.col("duration_s"),
         )
-        .drop("duration_h", "duration_m", "duration_s", "duration")
+        .drop(
+            "duration_h_text",
+            "duration_m_text",
+            "duration_s_text",
+            "duration_h",
+            "duration_m",
+            "duration_s",
+            "duration",
+        )
     )
 
     # 7. Priprema tagova
@@ -121,15 +131,15 @@ if __name__ == "__main__":
         .withColumn("engagement_rate", (F.col("likes") + F.col("comments")) / F.col("views"))
     )
 
-    # 9. Izračunavanje viral_score metrike
+    calculated_viral_score = F.round(
+        F.log10(F.col("views")) * 0.50
+        + F.col("like_ratio") * 100 * 0.30
+        + F.col("comment_ratio") * 100 * 0.20,
+        4,
+    )
     df = df.withColumn(
         "viral_score",
-        F.round(
-            F.log10(F.col("views")) * 0.50
-            + F.col("like_ratio") * 100 * 0.30
-            + F.col("comment_ratio") * 100 * 0.20,
-            4,
-        ),
+        F.coalesce(F.col("viral_score").cast("double"), calculated_viral_score),
     )
 
     # 10. Čuvanje u Parquet formatu

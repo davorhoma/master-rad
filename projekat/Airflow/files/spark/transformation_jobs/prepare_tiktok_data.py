@@ -22,63 +22,73 @@ if __name__ == "__main__":
     )
 
     TIKTOK_COLUMNS = [
-        "id",
-        "collected_time",
-        "create_time",
-        "desc",
-        "comment_count",
-        "digg_count",
-        "play_count",
-        "share_count",
+        "video_id",
+        "collected_at",
+        "published_at",
+        "description",
+        "comments",
+        "likes",
+        "views",
+        "shares",
         "duration",
-        "user_id",
-        "challenges",
-        "url",
-        "keyword",
-        "author_name",
-        "author_unique_id",
+        "video_url",
+        "search_query",
+        "channel_title",
+        "tags",
+        "viral_score",
+        "source_type",
     ]
 
     df = df.select(*TIKTOK_COLUMNS)
 
-    # Ujednačavanje naziva kolona
-    rename_columns = {
-        "id": "video_id",
-        "collected_time": "collected_at",
-        "create_time": "published_at",
-        "desc": "description",
-        "comment_count": "comments",
-        "digg_count": "likes",
-        "play_count": "views",
-        "share_count": "shares",
-        "duration": "duration_seconds",
-        "user_id": "channel_id",
-        "challenges": "tags",
-        "author_name": "channel_title",
-        "author_unique_id": "username",
-    }
-
-    for old_name, new_name in rename_columns.items():
-        if old_name != new_name and old_name in df.columns:
-            df = df.withColumnRenamed(old_name, new_name)
-
-    # Tipizacija podataka
-    # Vremenske kolone su Unix timestamp izražene u sekundama.
+    publish_time = F.trim(F.col("published_at"))
+    detected_time = F.trim(F.col("collected_at"))
     df = (
         df.withColumn(
             "published_at",
-            F.to_timestamp(F.from_unixtime(F.col("published_at").cast("long"))),
+            F.when(
+                publish_time.rlike(r"^\d+(\.\d+)?$"),
+                F.to_timestamp(F.from_unixtime(publish_time.cast("double").cast("long"))),
+            ).otherwise(F.to_timestamp(publish_time)),
         )
         .withColumn(
             "collected_at",
-            F.to_timestamp(F.from_unixtime(F.col("collected_at").cast("long"))),
+            F.when(
+                detected_time.rlike(r"^\d+(\.\d+)?$"),
+                F.to_timestamp(F.from_unixtime(detected_time.cast("double").cast("long"))),
+            ).otherwise(F.to_timestamp(detected_time)),
         )
         .withColumn("views", F.col("views").cast("long"))
         .withColumn("likes", F.col("likes").cast("long"))
         .withColumn("comments", F.col("comments").cast("long"))
         .withColumn("shares", F.col("shares").cast("long"))
-        .withColumn("duration_seconds", F.col("duration_seconds").cast("int"))
         .withColumn("platform", F.lit("TikTok"))
+    )
+
+    duration_text = F.trim(F.col("duration"))
+    duration_parts = F.split(duration_text, ":")
+    df = df.withColumn(
+        "duration_seconds",
+        F.when(
+            duration_text.rlike(r"^\d+(\.\d+)?$"),
+            duration_text.cast("double").cast("int"),
+        )
+        .when(
+            duration_text.rlike(r"^\d+:\d{2}$"),
+            duration_parts.getItem(0).cast("int") * 60
+            + duration_parts.getItem(1).cast("int"),
+        )
+        .otherwise(F.lit(None).cast("int")),
+    )
+    df = (
+        df.withColumn("id", F.col("video_id"))
+        .withColumn("collected_time", F.col("collected_at"))
+        .withColumn("desc", F.col("description"))
+        .withColumn("comment_count", F.col("comments"))
+        .withColumn("digg_count", F.col("likes"))
+        .withColumn("play_count", F.col("views"))
+        .withColumn("share_count", F.col("shares"))
+        .withColumn("author_name", F.col("channel_title"))
     )
 
     # Čišćenje ekstremnih vrednosti
@@ -88,8 +98,7 @@ if __name__ == "__main__":
         & (F.col("views") <= MAX_REALISTIC_PLAYS)
     )
 
-    # Priprema hashtagova
-    # Kolona 'tags' sadrži hashtagove razdvojene zarezima.
+    # Priprema hashtagova razdvojenih zarezima.
     df = df.withColumn(
         "tags",
         F.when(
