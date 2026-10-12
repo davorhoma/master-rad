@@ -10,9 +10,9 @@ else
 	echo ">> Docker network 'yt-tt-analysis' already exists"
 fi
 
-start_mongodb() {
-	echo ">> Starting up MongoDB"
-	docker compose -f MongoDB/docker-compose.yml up -d
+start_postgres() {
+	echo ">> Starting up PostgreSQL and Adminer"
+	docker compose -f Postgres/docker-compose.yml up -d postgres adminer
 }
 
 start_batch() {
@@ -20,23 +20,23 @@ start_batch() {
 	docker compose -f Hadoop/docker-compose.yml up -d
 
 	echo ">> Starting Apache Spark"
-	docker compose -f Spark/docker-compose.yml up -d
+	docker compose -f Spark/docker-compose.yml up -d --build
 
-	start_mongodb
+	start_postgres
 
 	echo ">> Starting Airflow"
-	docker compose -f Airflow/docker-compose.yml up -d
+	docker compose -f Airflow/docker-compose.yml up -d --build
 }
 
 start_realtime() {
-	start_mongodb
+	start_postgres
 
 	echo ">> Starting up Kafka"
 	docker compose -f Kafka/docker-compose.yml up -d
 }
 
 start_dashboard() {
-	start_mongodb
+	start_postgres
 
 	echo ">> Starting up Apache Superset"
 	docker compose -f Superset/docker-compose.yml up -d
@@ -47,15 +47,15 @@ start_all() {
 	docker compose -f Hadoop/docker-compose.yml up -d
 
 	echo ">> Starting up Apache Spark"
-	docker compose -f Spark/docker-compose.yml up -d
+	docker compose -f Spark/docker-compose.yml up -d --build
 
-	start_mongodb
+	start_postgres
 
 	echo ">> Starting up Apache Superset"
 	docker compose -f Superset/docker-compose.yml up -d
 
 	echo ">> Starting up Airflow"
-	docker compose -f Airflow/docker-compose.yml up -d
+	docker compose -f Airflow/docker-compose.yml up -d --build
 
 	echo ">> Starting up Kafka"
 	docker compose -f Kafka/docker-compose.yml up -d
@@ -84,10 +84,10 @@ all)
 	echo "Usage: $0 {batch|realtime|dashboard|all}"
 	echo ""
 	echo "Available modes:"
-	echo "  batch      - HDFS + Spark + MongoDB + Airflow"
-	echo "  realtime   - MongoDB + Kafka"
-	echo "  dashboard  - MongoDB + Superset"
-	echo "  all        - HDFS + Spark + MongoDB + Superset + Airflow + Kafka"
+	echo "  batch      - HDFS + Spark + PostgreSQL + Airflow"
+	echo "  realtime   - PostgreSQL + Kafka"
+	echo "  dashboard  - PostgreSQL + Superset"
+	echo "  all        - HDFS + Spark + PostgreSQL + Superset + Airflow + Kafka"
 	echo ""
 	exit 1
 	;;

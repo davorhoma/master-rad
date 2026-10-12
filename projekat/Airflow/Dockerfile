@@ -45,31 +45,11 @@ RUN mkdir -p "${SPARK_EXTRA_JARS_DIR}"
 # ---- Install curl (if not present) ----
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-# ---- Download MongoDB Spark Connector ----
-
+ENV POSTGRES_JDBC_VERSION=42.7.8
 RUN curl -fL \
-  https://repo1.maven.org/maven2/org/mongodb/spark/mongo-spark-connector_2.12/10.5.0/mongo-spark-connector_2.12-10.5.0.jar \
-  -o /opt/spark/jars/mongo-spark-connector_2.12-10.5.0.jar
-
-# MongoDB Java Driver dependencies
-RUN curl -fL \
-  https://repo1.maven.org/maven2/org/mongodb/mongodb-driver-sync/5.1.1/mongodb-driver-sync-5.1.1.jar \
-  -o /opt/spark/jars/mongodb-driver-sync-5.1.1.jar
-
-RUN curl -fL \
-  https://repo1.maven.org/maven2/org/mongodb/mongodb-driver-core/5.1.1/mongodb-driver-core-5.1.1.jar \
-  -o /opt/spark/jars/mongodb-driver-core-5.1.1.jar
-
-RUN curl -fL \
-  https://repo1.maven.org/maven2/org/mongodb/bson/5.1.1/bson-5.1.1.jar \
-  -o /opt/spark/jars/bson-5.1.1.jar
-
-# ---- Fix permissions ----
-RUN chown root:root \
-  /opt/spark/jars/mongo-spark-connector_2.12-10.5.0.jar \
-  /opt/spark/jars/mongodb-driver-sync-5.1.1.jar \
-  /opt/spark/jars/mongodb-driver-core-5.1.1.jar \
-  /opt/spark/jars/bson-5.1.1.jar
+  https://repo1.maven.org/maven2/org/postgresql/postgresql/${POSTGRES_JDBC_VERSION}/postgresql-${POSTGRES_JDBC_VERSION}.jar \
+  -o /opt/spark/jars/postgresql-${POSTGRES_JDBC_VERSION}.jar \
+ && chown root:root /opt/spark/jars/postgresql-${POSTGRES_JDBC_VERSION}.jar
 
 # ---- Spark Kafka Connector ----
 RUN curl -fL \

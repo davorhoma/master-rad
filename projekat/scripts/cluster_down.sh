@@ -8,8 +8,8 @@ docker compose -f Airflow/docker-compose.yml down
 echo ">> Shutting down Apache Superset"
 docker compose -f Superset/docker-compose.yml down
 
-echo ">> Shutting down MongoDB"
-docker compose -f MongoDB/docker-compose.yml down
+echo ">> Shutting down PostgreSQL and Adminer (data volume is retained)"
+docker compose -f Postgres/docker-compose.yml down
 
 echo ">> Shutting down Apache Spark"
 docker compose -f Spark/docker-compose.yml down

@@ -58,6 +58,7 @@ x-airflow-common:
   build: .
   env_file:
     - ${ENV_FILE_PATH:-.env}
+    - ../Postgres/.env
   environment:
     &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
@@ -196,8 +197,8 @@ services:
   airflow-worker:
     <<: *airflow-common
     command: celery worker
-    mem_limit: 1g
-    mem_reservation: 512m
+    mem_limit: 3g
+    mem_reservation: 2g
     healthcheck:
       # yamllint disable rule:line-length
       test:

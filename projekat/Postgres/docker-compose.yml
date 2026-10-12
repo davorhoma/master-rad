@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:17.7
+    container_name: postgres
+    mem_limit: 2g
+    env_file:
+      - .env
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - yt-tt-analysis
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  adminer:
+    image: adminer:4.8.1
+    container_name: adminer
+    ports:
+      - "8222:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - yt-tt-analysis
+
+  etl:
+    build:
+      context: ../etl
+      dockerfile: Dockerfile
+    profiles: ["etl"]
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - yt-tt-analysis
+
+volumes:
+  postgres_data:
+    name: postgres_data
+    driver: local
+
+networks:
+  yt-tt-analysis:
+    name: yt-tt-analysis
+    external: true

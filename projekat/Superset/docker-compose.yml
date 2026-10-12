@@ -51,6 +51,9 @@ services:
 
     container_name: superset
 
+    env_file:
+      - ../Postgres/.env
+
     mem_limit: 2g
     mem_reservation: 768m
 
@@ -82,6 +85,9 @@ services:
 
         superset db upgrade
         superset init
+        superset set-database-uri \
+          --database_name "PostgreSQL Analytics" \
+          --uri "postgresql+psycopg2://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@postgres:5432/$${POSTGRES_DB}"
 
         if ! superset fab list-users | grep -q 'username:admin'; then
           echo "Admin user does not exist. Creating admin..."
