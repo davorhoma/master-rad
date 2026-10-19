@@ -37,6 +37,10 @@ RUN wget -q \
     rm -rf /tmp/Python.tgz "/tmp/Python-${PYTHON_VERSION}" && \
     /usr/local/bin/python3.11 --version
 
+COPY requirements.txt /tmp/requirements.txt
+RUN /usr/local/bin/python3.11 -m pip install --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
+
 ENV PYSPARK_PYTHON=/usr/local/bin/python3.11
 ENV PYSPARK_DRIVER_PYTHON=/usr/local/bin/python3.11
 
