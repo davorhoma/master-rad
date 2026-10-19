@@ -117,7 +117,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 768M # Maksimalno RAM-a što kontejner može da potroši
+          memory: 768M
         reservations:
           memory: 256M
     restart: unless-stopped
@@ -365,6 +365,102 @@ services:
     volumes:
       - kafka-streams-q10-state:/app/kafka-streams
 
+  stream-processor-video-daily-metrics:
+    build:
+      context: .
+    container_name: stream-processor-video-daily-metrics
+    profiles: ["video-daily-metrics", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      APPLICATION_ID: "creator-video-daily-metrics-app-v2"
+      INPUT_YT_TOPICS: "yt-monitoring-topic,yt-search-topic"
+      INPUT_TT_TOPICS: "tt-monitoring-topic,tt-search-topic"
+      OUTPUT_TOPIC: "creator-video-daily-metrics"
+      POSTGRES_HOST: "postgres" # ime PostgreSQL servisa u compose-u
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${POSTGRES_DB}" # iste vrednosti kao u Airflow/Spark okruženju
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_SCHEMA: "${ANALYTICS_POSTGRES_SCHEMA:-public}"
+      POSTGRES_TABLE: "creator_video_daily_metrics"
+      STATE_DIR: "/app/kafka-streams"
+      NUM_STREAM_THREADS: "1"
+      COMMIT_INTERVAL_MS: "5000"
+      STREAMS_REPLICATION_FACTOR: "2"
+      PROCESSING_GUARANTEE: "at_least_once"
+      AUTO_OFFSET_RESET: "earliest"
+    command:
+      [
+        "java",
+        "-Xms64m",
+        "-Xmx256m",
+        "-XX:+UseSerialGC",
+        "-XX:MaxMetaspaceSize=128m",
+        "-Duser.timezone=UTC",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.VideoDailyMetricsStream",
+      ]
+    deploy:
+      resources:
+        limits:
+          memory: 640M
+        reservations:
+          memory: 256M
+    stop_grace_period: 30s
+    restart: unless-stopped
+    volumes:
+      - kafka-streams-video-daily-metrics-state:/app/kafka-streams
+
+  stream-processor-channel-timeline:
+    build:
+      context: .
+    container_name: stream-processor-channel-timeline
+    profiles: ["channel-timeline", "all"]
+    networks:
+      - yt-tt-analysis
+    environment:
+      BOOTSTRAP_SERVERS: "broker1:9092,broker2:9092"
+      APPLICATION_ID: "channel-timeline-app"
+      INPUT_TOPIC: "creator-video-daily-metrics"
+      POSTGRES_HOST: "postgres"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${POSTGRES_DB}"
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_SCHEMA: "${ANALYTICS_POSTGRES_SCHEMA:-public}"
+      POSTGRES_TABLE: "channel_timeline_2"
+      STATE_DIR: "/app/kafka-streams"
+      NUM_STREAM_THREADS: "1"
+      COMMIT_INTERVAL_MS: "5000"
+      STREAMS_REPLICATION_FACTOR: "2"
+      PROCESSING_GUARANTEE: "at_least_once" # exactly_once_v2 samo ako brokeri imaju transaction.state.log.replication.factor=2
+      AUTO_OFFSET_RESET: "earliest"
+    command:
+      [
+        "java",
+        "-Xms64m",
+        "-Xmx256m",
+        "-XX:+UseSerialGC",
+        "-XX:MaxMetaspaceSize=128m",
+        "-Duser.timezone=UTC",
+        "-cp",
+        "/app/target/kafka-streams-demo-1.0-SNAPSHOT.jar",
+        "com.example.kafka_streams_examples.ChannelTimelineStream",
+      ]
+    deploy:
+      resources:
+        limits:
+          memory: 640M
+        reservations:
+          memory: 256M
+    stop_grace_period: 30s
+    restart: unless-stopped
+    volumes:
+      - kafka-streams-channel-timeline-state:/app/kafka-streams
+
 volumes:
   kafka-streams-q1-state:
   kafka-streams-q2-state:
@@ -378,3 +474,5 @@ volumes:
   kafka-streams-q99-state:
   kafka-streams-q992-state:
   kafka-streams-q10-state:
+  kafka-streams-video-daily-metrics-state:
+  kafka-streams-channel-timeline-state:
