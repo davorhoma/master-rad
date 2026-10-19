@@ -1,4 +1,4 @@
-package com.example.kafka_streams_examples;
+package com.example.kafka_streams_examples.old;
 
 import java.time.Duration;
 import java.util.Arrays;
@@ -91,11 +91,9 @@ public class PopularGamingKeywordsStream {
                         Serdes.String(),
                         Serdes.String()));
 
-        // Čitanje sa YouTube i TikTok topika
         KStream<String, String> ytStream = builder.stream("yt-monitoring-topic");
         KStream<String, String> ttStream = builder.stream("tt-monitoring-topic");
 
-        // Mapiranje YouTube poruka uz inkrementiranje i povremeni ispis brojača
         KStream<String, Document> ytProcessed = ytStream.peek((key, value) -> {
             long currentCount = ytMessageCount.incrementAndGet();
             if (currentCount % 500 == 0 || currentCount == 10467) {
@@ -122,7 +120,6 @@ public class PopularGamingKeywordsStream {
             return result;
         });
 
-        // Mapiranje TikTok poruka uz inkrementiranje i povremeni ispis brojača
         KStream<String, Document> ttProcessed = ttStream.peek((key, value) -> {
             long currentCount = ttMessageCount.incrementAndGet();
             if (currentCount % 2000 == 0 || currentCount == 43338) {
@@ -153,10 +150,8 @@ public class PopularGamingKeywordsStream {
             return result;
         });
 
-        // Spajanje tokova
         KStream<String, Document> mergedStream = ytProcessed.merge(ttProcessed);
 
-        // Korišćenje Processor API-ja sa baferovanjem i batch upis
         mergedStream.process(new ProcessorSupplier<String, Document, Void, Void>() {
             @Override
             public Processor<String, Document, Void, Void> get() {
@@ -164,8 +159,7 @@ public class PopularGamingKeywordsStream {
                     private KeyValueStore<String, String> stateStore;
                     private org.apache.kafka.streams.processor.api.ProcessorContext<Void, Void> context;
 
-                    // Bafer za čuvanje stanja reči pre masovnog upisa u bazu (Ključ: storeKey,
-                    // Vrednost: Document)
+                    // Bafer za čuvanje stanja reči pre masovnog upisa u bazu (Ključ: storeKey, Vrednost: Document)
                     private final Map<String, Document> mongoBuffer = new HashMap<>();
 
                     @Override
@@ -216,8 +210,7 @@ public class PopularGamingKeywordsStream {
                         }
                     }
 
-                    // Metoda koja se poziva na svake 3 sekunde i prazni bafer u MongoDB jednim bulk
-                    // upisom
+                    // Metoda koja se poziva na svake 3 sekunde i prazni bafer u MongoDB jednim bulk upisom
                     private void flushBatchToMongo() {
                         Map<String, Document> batchCopy;
                         synchronized (mongoBuffer) {

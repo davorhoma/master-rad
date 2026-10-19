@@ -1,4 +1,4 @@
-package com.example.kafka_streams_examples;
+package com.example.kafka_streams_examples.old;
 
 import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -38,16 +38,10 @@ public class PlatformViralScoreStream2 {
             .enable(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS)
             .build();
 
-    // --- Konfiguracija za growth-rate (levi grafik, ПП9) ---
     private static final String GROWTH_HISTORY_STORE = "theme-daily-history-store";
-    // Jedina konstanta koju treba menjati da bi se promenio broj dana koji se
-    // poredi: "poslednjih GROWTH_WINDOW_DAYS dana" vs "GROWTH_WINDOW_DAYS dana
-    // pre toga", po LITERALNIM kalendarskim datumima (ne po broju zapisa u
-    // istoriji - vidi napomenu u GrowthRateProcessor-u).
     private static final int GROWTH_WINDOW_DAYS = Integer.parseInt(
             System.getenv().getOrDefault("GROWTH_WINDOW_DAYS", "3"));
 
-    // --- Konfiguracija za "already trending" proveru (GRANA 3, ПП9 filter) ---
     private static final String TRENDING_STORE = "canonical-trending-global-store";
     private static final int TRENDING_TOP_N = Integer.parseInt(
             System.getenv().getOrDefault("TRENDING_TOP_N", "15"));
@@ -56,18 +50,17 @@ public class PlatformViralScoreStream2 {
         String bootstrapServers = System.getenv().getOrDefault("BOOTSTRAP_SERVERS", "localhost:9092");
         String mongoUri = System.getenv().getOrDefault("MONGO_URI", "mongodb://admin:admin@localhost:27017");
         String mongoDbName = System.getenv().getOrDefault("MONGO_DB", "realtime_data");
-        String mongoCollectionName = System.getenv().getOrDefault("MONGO_COLLECTION", "query_platform_viral_metrics");
+        String mongoCollectionName = System.getenv().getOrDefault("MONGO_COLLECTION", "query_platform_viral_score");
         String mongoGrowthCollectionName = System.getenv().getOrDefault("MONGO_GROWTH_COLLECTION",
                 "query_emerging_topics");
 
-        // Monitoring (trending) topici i interni topik za GlobalKTable lookup
         String ytMonitoringTopic = System.getenv().getOrDefault("YT_MONITORING_TOPIC", "yt-monitoring-topic");
         String ttMonitoringTopic = System.getenv().getOrDefault("TT_MONITORING_TOPIC", "tt-monitoring-topic");
         String trendingInternalTopic = System.getenv().getOrDefault("TRENDING_INTERNAL_TOPIC",
                 "canonical-trending-agg");
 
         Properties config = new Properties();
-        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "stream-processor-platform-viral-v1");
+        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "stream-processor-platform-viral-v2");
         config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
@@ -85,23 +78,15 @@ public class PlatformViralScoreStream2 {
 
         StreamsBuilder builder = new StreamsBuilder();
 
-        // Prate se samo search topik za YouTube i TikTok
         KStream<String, String> ytSearch = builder.stream("yt-search-topic");
         KStream<String, String> ttSearch = builder.stream("tt-search-topic");
 
-        // Mapiranje YouTube unosa
         KStream<String, PlatformMetrics> ytMapped = ytSearch.map((key, value) -> parseMessage(value, "youtube"));
-        // Mapiranje TikTok unosa
         KStream<String, PlatformMetrics> ttMapped = ttSearch.map((key, value) -> parseMessage(value, "tiktok"));
 
-        // Spajanje i obrada oba streama
         KStream<String, PlatformMetrics> allMapped = ytMapped.merge(ttMapped)
                 .filter((k, v) -> v != null && !k.startsWith("ERROR"));
 
-        // ==========================================================
-        // GRANA 1 (postojeća): agregacija po temi+platformi+datumu
-        // -> desni grafik (viral score trend po platformi)
-        // ==========================================================
         KTable<String, PlatformMetrics> aggregatedTable = allMapped
                 .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(PlatformMetrics.class)))
                 .reduce((aggValue, newValue) -> {
@@ -140,10 +125,6 @@ public class PlatformViralScoreStream2 {
             }
         });
 
-        // ==========================================================
-        // GRANA 2 (postojeća): agregacija po temi+datumu, BEZ platforme
-        // -> ulaz za izračunavanje 3-day growth rate-a (levi grafik, ПП9)
-        // ==========================================================
         KTable<String, PlatformMetrics> themeAggregatedTable = allMapped
                 .groupBy((key, value) -> value.theme + "_" + value.date,
                         Grouped.with(Serdes.String(), new JsonSerde<>(PlatformMetrics.class)))
@@ -158,21 +139,6 @@ public class PlatformViralScoreStream2 {
                             newCount);
                 });
 
-        // ==========================================================
-        // GRANA 3 (nova): agregacija MONITORING (trending) podataka po
-        // platformi+temi, direktno iz yt-monitoring-topic i
-        // tt-monitoring-topic. Ne koristi se ni za jedan grafik direktno -
-        // služi samo kao GlobalKTable lookup pomoću kog GrowthRateProcessor
-        // proverava da li je tema VEĆ probila top-N po avg viral_score-u na
-        // YouTube-u i/ili TikTok-u, i na osnovu toga isključuje temu iz liste
-        // "emerging topics" (ПП9), da se ne bi duplirala sa onim što ПП1 već
-        // prikazuje kao trending.
-        //
-        // GlobalKTable (a ne obična KTable) je neophodan jer monitoring
-        // podaci NISU ko-particionisani sa search podacima (drugi topici,
-        // drugačiji ključevi) - GlobalKTable se replicira na svaku instancu
-        // i dostupan je iz bilo kog Processor-a bez obzira na particionisanje.
-        // ==========================================================
         KStream<String, String> ytMonitoring = builder.stream(ytMonitoringTopic);
         KStream<String, String> ttMonitoring = builder.stream(ttMonitoringTopic);
 
@@ -190,11 +156,6 @@ public class PlatformViralScoreStream2 {
                         aggValue.viralScoreSum + newValue.viralScoreSum,
                         aggValue.count + newValue.count));
 
-        // Objavljivanje changelog-a na interni (compacted) topik - potrebno
-        // da bi se od njega mogao napraviti GlobalKTable. Topik treba da
-        // postoji unapred (ili da je auto.create.topics.enable=true na
-        // broker-u); u produkciji ga je bolje eksplicitno kreirati sa
-        // cleanup.policy=compact.
         monitoringAggTable.toStream().to(trendingInternalTopic,
                 Produced.with(Serdes.String(), new JsonSerde<>(MonitoringAgg.class)));
 
@@ -210,32 +171,12 @@ public class PlatformViralScoreStream2 {
                 Serdes.String());
         builder.addStateStore(historyStoreBuilder);
 
-        // KRITIČNO: themeAggregatedTable je repartition-ovan po ključu
-        // "tema_datum" (vidi .groupBy iznad, GRANA 2) - to znači da dva
-        // različita datuma ZA ISTU TEMU mogu završiti na dve različite Kafka
-        // particije, obrađene od strane dva različita Streams task-a, od
-        // kojih svaki ima SVOJU lokalnu (particionisanu) kopiju
-        // GROWTH_HISTORY_STORE-a. Rezultat: GrowthRateProcessor bi video samo
-        // ONAJ podskup dana za temu koji je slučajno hashovan na njegovu
-        // particiju - istorija bi bila fragmentisana i prosek pogrešan (npr.
-        // prior_3day_avg bi ispao jednak vrednosti samo JEDNOG dana), umesto
-        // proseka nad svim danima koji stvarno postoje u prozoru.
-        //
-        // Zato se stream OVDE eksplicitno re-key-uje na "samo tema" i
-        // eksplicitno repartition-uje (.repartition(...)) - ovo pravi novi
-        // interni repartition topik ključan po temi, garantujući da SVI
-        // datumi za istu temu završe na ISTOJ particiji/task-u, i time dele
-        // ISTU lokalnu instancu GROWTH_HISTORY_STORE-a.
         KStream<String, PlatformMetrics> themeKeyedStream = themeAggregatedTable.toStream()
                 .selectKey((key, value) -> value.theme)
                 .repartition(Repartitioned.<String, PlatformMetrics>as("theme-daily-history-repartition")
                         .withKeySerde(Serdes.String())
                         .withValueSerde(new JsonSerde<>(PlatformMetrics.class)));
 
-        // Napomena: TRENDING_STORE (GlobalKTable) se NE dodaje ovde kao
-        // connected store - globalni store-ovi su automatski dostupni iz bilo
-        // kog Processor-a preko context.getStateStore(), bez potrebe da se
-        // eksplicitno navedu u .process(...) pozivu.
         KStream<String, GrowthResult> growthStream = themeKeyedStream
                 .process(GrowthRateProcessor::new, GROWTH_HISTORY_STORE);
 
@@ -247,12 +188,6 @@ public class PlatformViralScoreStream2 {
                         .append("recent_3day_avg_viral_score", result.recentAvg)
                         .append("prior_3day_avg_viral_score", result.priorAvg);
 
-                // Upsert SAMO po temi (bez datuma u ključu) - ovde nam ne treba
-                // istorija growth rate-ova kroz vreme, već samo TRENUTNA vrednost
-                // za tu temu. "date" ostaje u dokumentu kao informativno polje
-                // (na osnovu kog dana je poslednji put izračunato), ali se ne
-                // koristi za pronalaženje dokumenta - zato svaki novi izračun
-                // PREPISUJE prethodni, umesto da pravi novi dokument.
                 growthCollection.updateOne(
                         com.mongodb.client.model.Filters.eq("topic", result.theme),
                         new Document("$set", doc),
@@ -276,15 +211,6 @@ public class PlatformViralScoreStream2 {
         streams.start();
     }
 
-    /**
-     * Proverava da li dato polje u JSON čvoru sadrži upotrebljiv tekst.
-     * Tretira kao "nema vrednosti" sledeće slučajeve:
-     * - polje ne postoji
-     * - polje je JSON null
-     * - polje je numerička NaN vrednost (neki producer-i, npr. Python json.dumps,
-     * šalju NaN za nedostajuće hashtag-ove umesto null-a ili praznog stringa)
-     * - polje je prazan string ili doslovno string "NaN"
-     */
     private static boolean isUsableText(JsonNode node, String field) {
         if (node == null || !node.has(field) || node.get(field).isNull()) {
             return false;
@@ -301,6 +227,11 @@ public class PlatformViralScoreStream2 {
         try {
             JsonNode node = objectMapper.readTree(value);
 
+            if (!isValidMessage(node)) {
+                log.warn("Ignorisana nevalidna {} poruka: {}", platform, value);
+                return KeyValue.pair("INVALID_" + System.currentTimeMillis(), null);
+            }
+
             String rawTag = "";
             if (isUsableText(node, "tags")) {
                 rawTag = node.get("tags").asText();
@@ -314,7 +245,6 @@ public class PlatformViralScoreStream2 {
 
             String canonicalTheme = mapToCanonicalTheme(rawTag);
 
-            // Ekstrakcija datuma zavisno od platforme
             String timeField = null;
             if ("youtube".equals(platform)) {
                 if (node.has("collected_at")) {
@@ -326,8 +256,6 @@ public class PlatformViralScoreStream2 {
                 }
             }
 
-            // TODO: Možda izbaciti LocalDate.now(), pa ukoliko timeField ne postoji, da se
-            // ta poruka prebaci u ERROR.
             String dateStr = LocalDate.now().toString();
             if (timeField != null) {
                 try {
@@ -339,7 +267,6 @@ public class PlatformViralScoreStream2 {
 
             double viralScore = node.has("viral_score") ? node.get("viral_score").asDouble(0.0) : 0.0;
 
-            // Ključ sada sadrži i datum kako bi se podaci particionisali i čuvali po danima
             String streamKey = canonicalTheme + "_" + platform + "_" + dateStr;
 
             return KeyValue.pair(streamKey,
@@ -350,16 +277,14 @@ public class PlatformViralScoreStream2 {
         }
     }
 
-    /**
-     * Parsira monitoring (trending) poruku u agregat po platformi+temi.
-     * Koristi istu ekstrakciju polja i istu normalizaciju teme kao
-     * {@link #parseMessage(String, String)}, ali bez datuma - agregat je
-     * kumulativan (isto kao u ViralScoreByGamingThemeStream-u) jer služi
-     * samo za rangiranje tema po platformi, ne za trend kroz vreme.
-     */
     private static KeyValue<String, MonitoringAgg> parseMonitoringMessage(String value, String platform) {
         try {
             JsonNode node = objectMapper.readTree(value);
+
+            if (!isValidMessage(node)) {
+                log.warn("Ignorisana nevalidna monitoring {} poruka: {}", platform, value);
+                return KeyValue.pair("INVALID_" + System.currentTimeMillis(), null);
+            }
 
             String rawTag = "";
             if (isUsableText(node, "tags")) {
@@ -382,6 +307,41 @@ public class PlatformViralScoreStream2 {
             log.error("Greška pri parsiranju monitoring poruke sa platforme {}: {}", platform, value, e);
             return KeyValue.pair("ERROR_" + System.currentTimeMillis(), null);
         }
+    }
+
+    private static boolean isValidMessage(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return false;
+        }
+
+        if (!node.has("views") ||
+                !node.has("likes") ||
+                !node.has("comments") ||
+                !node.has("viral_score")) {
+            return false;
+        }
+
+        double views = node.get("views").asDouble(Double.NaN);
+        double likes = node.get("likes").asDouble(Double.NaN);
+        double comments = node.get("comments").asDouble(Double.NaN);
+        double viralScore = node.get("viral_score").asDouble(Double.NaN);
+
+        if (Double.isNaN(views) || Double.isInfinite(views) ||
+                Double.isNaN(likes) || Double.isInfinite(likes) ||
+                Double.isNaN(comments) || Double.isInfinite(comments) ||
+                Double.isNaN(viralScore) || Double.isInfinite(viralScore)) {
+            return false;
+        }
+
+        if (views <= 0 ||
+                likes < 0 ||
+                comments < 0 ||
+                viralScore < 0 ||
+                likes > views) {
+            return false;
+        }
+
+        return true;
     }
 
     private static String mapToCanonicalTheme(String rawTag) {
@@ -547,13 +507,6 @@ public class PlatformViralScoreStream2 {
         }
     }
 
-    /**
-     * Kumulativni agregat po platformi+temi, izveden iz monitoring
-     * (trending) topika. Koristi se isključivo kao "lookup" podatak
-     * (GlobalKTable) da bi se utvrdilo koje su teme već trending, radi
-     * filtriranja emerging-topics liste (ПП9). Nema datum jer nam ovde
-     * treba samo rang po ukupnom proseku, ne trend kroz vreme.
-     */
     public static class MonitoringAgg {
         public String platform;
         public String theme;
@@ -571,11 +524,6 @@ public class PlatformViralScoreStream2 {
         }
     }
 
-    // ==========================================================
-    // Klase i procesor za growth-rate izračunavanje (levi grafik)
-    // ==========================================================
-
-    /** Jedna dnevna tačka proseka viral score-a za temu. */
     public static class DailyPoint {
         public String date;
         public double avgScore;
@@ -589,7 +537,6 @@ public class PlatformViralScoreStream2 {
         }
     }
 
-    /** Rezultat koji se upisuje u Mongo za levi grafik. */
     public static class GrowthResult {
         public String theme;
         public String date;
@@ -609,45 +556,8 @@ public class PlatformViralScoreStream2 {
         }
     }
 
-    /**
-     * Za svaku temu čuva rolling istoriju dnevnih proseka u state store-u (kao
-     * JSON string), ograničenu na poslednjih 2*GROWTH_WINDOW_DAYS kalendarskih
-     * dana. Growth rate poredi prosek za poslednjih GROWTH_WINDOW_DAYS
-     * kalendarskih dana (računajući od STVARNOG današnjeg datuma, ne od
-     * datuma poruke) sa prosekom za prethodnih GROWTH_WINDOW_DAYS kalendarskih
-     * dana pre toga - i prosleđuje rezultat dalje ako je tema još uvek
-     * "emerging" (vidi {@link #isAlreadyTrending(String)}).
-     *
-     * VAŽNO: prozori su vezani za STVARNE kalendarske datume, sa anchor-om =
-     * {@code LocalDate.now()} (npr. za GROWTH_WINDOW_DAYS=3 i danas=13.9:
-     * recent=[11.9-13.9], prior=[8.9-10.9]), a ne za "poslednjih N zapisa u
-     * istoriji" niti za datum poruke koja je poslednja stigla za tu temu -
-     * ovo je namerno, jer poruke mogu stizati sa zakašnjenjem ili sa
-     * "collected_at"/"trending_detected_time" iz prošlosti, pa bi anchor
-     * vezan za datum poruke davao pogrešan prozor u odnosu na stvarni "danas".
-     * Ako tema nema podatke baš svaki dan (uobičajeno kod scraping
-     * pipeline-a), prosek se računa samo nad danima koji stvarno postoje u
-     * datom rasponu, umesto da se prozor tiho pomeri dalje unazad da bi
-     * upotpunio fiksan broj zapisa. Ako u nekom od dva prozora nema nijednog
-     * dana sa podacima, growth rate se ne računa za tu temu (bez forward-a).
-     *
-     * Pošto je anchor sada vezan za stvarni "danas" a ne za dolazeće poruke,
-     * sam dolazak poruke više nije dovoljan da drži growth rate ažurnim - ako
-     * tema nema NIJEDNU novu poruku tokom dana, prozor bi i dalje trebalo da
-     * "kliza" napred svaki dan. Zato se, pored recompute-a pri svakoj
-     * pristigloj poruci, registruje i dnevni WALL_CLOCK_TIME punktuator koji
-     * prolazi kroz SVE teme u istoriji i ponovo računa growth rate u odnosu
-     * na tekući datum, bez obzira na to da li je za tu temu baš tog dana
-     * stigla nova poruka.
-     */
     public static class GrowthRateProcessor implements Processor<String, PlatformMetrics, String, GrowthResult> {
         private KeyValueStore<String, String> store;
-        // NAPOMENA: store-ovi koji stoje iza KTable/GlobalKTable-a (kao
-        // TRENDING_STORE) interno čuvaju vrednosti omotane u
-        // ValueAndTimestamp<V>, bez obzira šta se navede u Materialized
-        // generičkim parametrima. Zato se OVDE mora koristiti
-        // ValueAndTimestamp<MonitoringAgg>, a ne "goli" MonitoringAgg -
-        // u suprotnom se dobija ClassCastException pri svakom čitanju.
         private KeyValueStore<String, ValueAndTimestamp<MonitoringAgg>> trendingStore;
         private ProcessorContext<String, GrowthResult> context;
 
@@ -655,31 +565,8 @@ public class PlatformViralScoreStream2 {
         public void init(ProcessorContext<String, GrowthResult> context) {
             this.context = context;
             this.store = context.getStateStore(GROWTH_HISTORY_STORE);
-            // TRENDING_STORE je backing store GlobalKTable-a - dostupan je iz
-            // bilo kog Processor-a u topologiji bez potrebe da se eksplicitno
-            // navede kao "connected store" u .process(...) pozivu.
             this.trendingStore = context.getStateStore(TRENDING_STORE);
 
-            // Dnevni recompute za SVE teme, nezavisno od toga da li je za njih
-            // baš danas stigla nova poruka - inače bi prozor ostao "zaleđen"
-            // na poslednjem danu kad je tema imala saobraćaj.
-            //
-            // VAŽNO: context.schedule(interval, ...) prvi put "tikne" TEK
-            // POSLE proteklog intervala od starta procesora, ne odmah. To
-            // znači da bi, bez nekog prvog poziva uskoro po startu, dokumenti
-            // u Mongo-u za teme bez novog saobraćaja posle restarta ostali
-            // "zaleđeni" na vrednosti izračunatoj PRE restarta sve dok prvi
-            // punktuator ne tikne - i do 24h kasnije.
-            //
-            // NE SME se, međutim, pozvati recomputeAllThemes() direktno OVDE
-            // u init() - u tom trenutku downstream čvorovi topologije još
-            // nisu "otvoreni" (topologija se tek inicijalizuje), pa
-            // context.forward() (pozvan iznutra) baca
-            // "IllegalStateException: The processor is already closed".
-            // Zato se početni recompute radi kroz JEDNOKRATNI punktuator sa
-            // kratkim odlaganjem (izvršava se tek kad je topologija potpuno
-            // spremna za forward), koji sam sebe otkazuje posle prvog
-            // izvršavanja, nakon čega ostaje samo redovni 24h punktuator.
             final Cancellable[] startupPunctuator = new Cancellable[1];
             startupPunctuator[0] = context.schedule(java.time.Duration.ofSeconds(5),
                     PunctuationType.WALL_CLOCK_TIME, timestamp -> {
@@ -706,7 +593,6 @@ public class PlatformViralScoreStream2 {
                         : objectMapper.readValue(historyJson, new TypeReference<List<DailyPoint>>() {
                         });
 
-                // Upsert današnjeg unosa (ako već postoji za taj datum, prepiši ga)
                 history.removeIf(p -> p.date.equals(value.date));
                 history.add(new DailyPoint(value.date, avgScore));
                 history.sort(Comparator.comparing(p -> p.date));
@@ -720,13 +606,6 @@ public class PlatformViralScoreStream2 {
             }
         }
 
-        /**
-         * Prolazi kroz istoriju SVIH tema u store-u i ponovo računa growth
-         * rate za svaku od njih u odnosu na trenutni datum (LocalDate.now()).
-         * Poziva se jednom dnevno iz WALL_CLOCK_TIME punktuatora, da bi
-         * prozori "klizili" napred i za teme koje tog dana nemaju nijednu
-         * novu poruku.
-         */
         private void recomputeAllThemes() {
             long now = System.currentTimeMillis();
             try (KeyValueIterator<String, String> it = store.all()) {
@@ -748,12 +627,6 @@ public class PlatformViralScoreStream2 {
             }
         }
 
-        /**
-         * Uklanja iz istorije dane starije od 2*GROWTH_WINDOW_DAYS kalendarskih
-         * dana unazad od STVARNOG današnjeg datuma (a ne od fiksnog BROJA
-         * zapisa), da JSON lista u store-u ne raste neograničeno kod
-         * dugotrajno aktivnih tema.
-         */
         private List<DailyPoint> trimHistory(List<DailyPoint> history) {
             LocalDate anchor = LocalDate.now();
             LocalDate cutoff = anchor.minusDays(2L * GROWTH_WINDOW_DAYS);
@@ -761,15 +634,6 @@ public class PlatformViralScoreStream2 {
             return history;
         }
 
-        /**
-         * Računa growth rate za datu temu na osnovu njene istorije, poredeći
-         * prozor [danas - (GROWTH_WINDOW_DAYS-1), danas] sa prozorom
-         * [danas - (2*GROWTH_WINDOW_DAYS-1), danas - GROWTH_WINDOW_DAYS], gde
-         * je "danas" = LocalDate.now() (stvarni kalendarski datum, ne datum
-         * poslednje poruke). Dani bez podataka se jednostavno ne nalaze u
-         * istoriji i zato ne ulaze u prosek - prosek se računa samo nad
-         * danima koji STVARNO postoje u datom rasponu.
-         */
         private void computeAndForward(String theme, List<DailyPoint> history, long timestamp) {
             LocalDate anchor = LocalDate.now();
 
@@ -788,9 +652,6 @@ public class PlatformViralScoreStream2 {
                 }
             }
 
-            // Zahtevamo BAR PO JEDAN dan podataka u oba prozora - inače growth
-            // rate nema smisla (npr. tema se pojavila tek juče, nema šta da
-            // se poredi sa "prethodnih GROWTH_WINDOW_DAYS dana").
             if (recentPoints.isEmpty() || priorPoints.isEmpty()) {
                 return;
             }
@@ -810,38 +671,19 @@ public class PlatformViralScoreStream2 {
             context.forward(new Record<>(theme, result, timestamp));
         }
 
-        /**
-         * AND logika: tema se smatra "već trending" (i isključuje se iz
-         * emerging liste, ПП9) SAMO ako je istovremeno probila top-N po
-         * avg viral_score-u i na YouTube-u I na TikTok-u. Ako je probila
-         * top-N na samo jednoj platformi (ili ni na jednoj), i dalje se
-         * tretira kao "emerging" kandidat.
-         *
-         * Za labaviju (OR) varijantu u budućnosti: zameniti telo petlje sa
-         * "if (isInTopN(theme, platform)) return true;" i na kraju
-         * "return false;" - tj. isključiti čim je top-N probijen na BILO
-         * KOJOJ platformi.
-         */
         private boolean isAlreadyTrending(String theme) {
             if (trendingStore == null) {
-                return false; // GlobalKTable store još nije popunjen (npr. odmah po startu app-a)
+                return false;
             }
 
             for (String platform : List.of("youtube", "tiktok")) {
                 if (!isInTopN(theme, platform)) {
-                    return false; // promašio top-N na BAR JEDNOJ platformi -> ostaje emerging (AND)
+                    return false;
                 }
             }
-            return true; // probio top-N na OBE platforme -> više nije emerging
+            return true;
         }
 
-        /**
-         * Rangira sve teme za datu platformu po avg viral_score-u (iz
-         * TRENDING_STORE-a) i proverava da li je data tema u top-N. Katalog
-         * kanonskih tema je mali (desetak-do-stotinak fiksnih kategorija iz
-         * mapToCanonicalTheme), pa je puno skeniranje store-a pri svakom
-         * pozivu jeftino i ne zahteva keširanje.
-         */
         private boolean isInTopN(String theme, String platform) {
             List<Map.Entry<String, Double>> ranked = new ArrayList<>();
             try (KeyValueIterator<String, ValueAndTimestamp<MonitoringAgg>> it = trendingStore.all()) {

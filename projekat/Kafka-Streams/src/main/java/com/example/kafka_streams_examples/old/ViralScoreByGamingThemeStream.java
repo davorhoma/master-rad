@@ -1,4 +1,4 @@
-package com.example.kafka_streams_examples;
+package com.example.kafka_streams_examples.old;
 
 import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
@@ -18,10 +18,9 @@ import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.serialization.Serializer;
 import org.apache.kafka.streams.*;
 import org.apache.kafka.streams.kstream.*;
+import org.apache.kafka.streams.state.KeyValueStore;
 import org.bson.Document;
 
-import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
@@ -29,28 +28,26 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class ViewsByThemeTimelineStream {
+public class ViralScoreByGamingThemeStream {
 
     private static final ObjectMapper objectMapper = new ObjectMapper()
             .enable(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS.mappedFeature());
 
-    public static class DetailedViewsAggregation {
+    public static class DetailedScoreAggregation {
         public String platform;
         public String theme;
-        public String timeWindow;
-        public long totalViews;
+        public double totalScore;
         public long count;
 
-        public DetailedViewsAggregation() {
-            this.totalViews = 0L;
+        public DetailedScoreAggregation() {
+            this.totalScore = 0.0;
             this.count = 0L;
         }
 
-        public DetailedViewsAggregation(String platform, String theme, String timeWindow, long totalViews, long count) {
+        public DetailedScoreAggregation(String platform, String theme, double totalScore, long count) {
             this.platform = platform;
             this.theme = theme;
-            this.timeWindow = timeWindow;
-            this.totalViews = totalViews;
+            this.totalScore = totalScore;
             this.count = count;
         }
     }
@@ -88,10 +85,10 @@ public class ViewsByThemeTimelineStream {
     }
 
     public static void main(String[] args) {
-        System.out.println("Started Views By Gaming Theme Timeline Processor with Payload Timestamps.");
+        System.out.println("Started Viral Score By Gaming Theme Processor with Canonical Normalization.");
 
         Properties config = new Properties();
-        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "views-by-theme-timeline-processor-v1");
+        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "viral-score-by-theme-processor-v4");
         config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG,
                 System.getenv().getOrDefault("BOOTSTRAP_SERVERS", "broker1:9092,broker2:9092"));
         config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
@@ -100,23 +97,22 @@ public class ViewsByThemeTimelineStream {
         config.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
         config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
+        // MongoDB konekcija
         String mongoUri = System.getenv().getOrDefault("MONGO_URI", "mongodb://admin:admin@mongodb:27017");
         String mongoDbName = System.getenv().getOrDefault("MONGO_DB", "realtime_data");
-        String mongoCollectionName = System.getenv().getOrDefault("MONGO_COLLECTION", "query_2_views_timeline");
+        String mongoCollectionName = System.getenv().getOrDefault("MONGO_COLLECTION", "query_1_viral_score_themes");
 
         MongoClient mongoClient = MongoClients.create(mongoUri);
         MongoDatabase database = mongoClient.getDatabase(mongoDbName);
 
         MongoIndexManager.ensureIndexes(database, mongoCollectionName);
-        
+
         MongoCollection<Document> collection = database.getCollection(mongoCollectionName);
 
         StreamsBuilder builder = new StreamsBuilder();
 
-        // Brojači za ulazne poruke i upise u bazu
         AtomicLong ytMessageCounter = new AtomicLong(0);
         AtomicLong ttMessageCounter = new AtomicLong(0);
-        AtomicLong mongoWriteCounter = new AtomicLong(0);
 
         KStream<String, String> ytStream = builder.stream("yt-monitoring-topic");
         KStream<String, String> ttStream = builder.stream("tt-monitoring-topic");
@@ -125,8 +121,7 @@ public class ViewsByThemeTimelineStream {
             List<KeyValue<String, Document>> result = new ArrayList<>();
             try {
                 JsonNode node = objectMapper.readTree(value);
-                long views = parseViews(node);
-                String timeWindow = extractDate(node, "YouTube");
+                double viralScore = parseViralScore(node);
 
                 String tagsStr = node.has("tags") ? node.path("tags").asText("") : "";
                 if (!tagsStr.isEmpty()) {
@@ -136,9 +131,8 @@ public class ViewsByThemeTimelineStream {
                         if (!rawTheme.isEmpty()) {
                             Document doc = new Document("platform", "YouTube")
                                     .append("theme", rawTheme)
-                                    .append("time_window", timeWindow)
-                                    .append("views", views);
-                            result.add(new KeyValue<>("YouTube_" + rawTheme + "_" + timeWindow, doc));
+                                    .append("viral_score", viralScore);
+                            result.add(new KeyValue<>("YouTube_" + rawTheme, doc));
                         }
                     }
                 }
@@ -153,8 +147,7 @@ public class ViewsByThemeTimelineStream {
             List<KeyValue<String, Document>> result = new ArrayList<>();
             try {
                 JsonNode node = objectMapper.readTree(value);
-                long views = parseViews(node);
-                String timeWindow = extractDate(node, "TikTok");
+                double viralScore = parseViralScore(node);
 
                 String hashtagsStr = node.has("hashtags") ? node.path("hashtags").asText("") : "";
                 List<String> hashtagNames = extractTikTokHashtagNames(hashtagsStr);
@@ -164,9 +157,8 @@ public class ViewsByThemeTimelineStream {
                     if (!rawTheme.isEmpty()) {
                         Document doc = new Document("platform", "TikTok")
                                 .append("theme", rawTheme)
-                                .append("time_window", timeWindow)
-                                .append("views", views);
-                        result.add(new KeyValue<>("TikTok_" + rawTheme + "_" + timeWindow, doc));
+                                .append("viral_score", viralScore);
+                        result.add(new KeyValue<>("TikTok_" + rawTheme, doc));
                     }
                 }
                 ttMessageCounter.incrementAndGet();
@@ -178,76 +170,66 @@ public class ViewsByThemeTimelineStream {
 
         KStream<String, Document> mergedStream = ytProcessed.merge(ttProcessed);
 
-        // Agregacija po platformi, temi i datumu iz payload-a
-        KTable<String, DetailedViewsAggregation> aggregatedThemesTimeline = mergedStream
+        KTable<String, DetailedScoreAggregation> aggregatedThemes = mergedStream
                 .map((key, doc) -> {
                     String platform = doc.getString("platform");
                     String rawTheme = doc.getString("theme");
-                    String timeWindow = doc.getString("time_window");
                     String canonicalTheme = mapToCanonicalTheme(rawTheme);
-                    long views = doc.getLong("views");
+                    double score = doc.getDouble("viral_score");
 
-                    String groupKey = platform + "_" + canonicalTheme + "_" + timeWindow;
-                    DetailedViewsAggregation initialVal = new DetailedViewsAggregation(platform, canonicalTheme,
-                            timeWindow, views, 1L);
+                    String groupKey = platform + "_" + canonicalTheme;
+
+                    DetailedScoreAggregation initialVal = new DetailedScoreAggregation(platform, canonicalTheme, score,
+                            1L);
                     return new KeyValue<>(groupKey, initialVal);
                 })
-                .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(DetailedViewsAggregation.class)))
+                .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(DetailedScoreAggregation.class)))
                 .aggregate(
-                        DetailedViewsAggregation::new,
+                        DetailedScoreAggregation::new,
                         (aggKey, newRecord, aggregate) -> {
                             if (aggregate.platform == null)
                                 aggregate.platform = newRecord.platform;
                             if (aggregate.theme == null)
                                 aggregate.theme = newRecord.theme;
-                            if (aggregate.timeWindow == null)
-                                aggregate.timeWindow = newRecord.timeWindow;
-                            aggregate.totalViews += newRecord.totalViews;
+                            aggregate.totalScore += newRecord.totalScore;
                             aggregate.count += newRecord.count;
                             return aggregate;
                         },
-                        Materialized.<String, DetailedViewsAggregation, org.apache.kafka.streams.state.KeyValueStore<org.apache.kafka.common.utils.Bytes, byte[]>>as(
-                                "views-timeline-store")
+                        Materialized.<String, DetailedScoreAggregation, KeyValueStore<org.apache.kafka.common.utils.Bytes, byte[]>>as(
+                                "canonical-theme-store")
                                 .withKeySerde(Serdes.String())
-                                .withValueSerde(new JsonSerde<>(DetailedViewsAggregation.class)));
+                                .withValueSerde(new JsonSerde<>(DetailedScoreAggregation.class)));
 
-        // Upis u MongoDB
-        aggregatedThemesTimeline.toStream().foreach((aggKey, aggregation) -> {
+        aggregatedThemes.toStream().foreach((aggKey, aggregation) -> {
             try {
-                if (aggregation == null || aggregation.theme == null || aggregation.timeWindow == null)
+                if (aggregation == null || aggregation.theme == null)
                     return;
 
-                double averageViews = aggregation.count > 0 ? (double) aggregation.totalViews / aggregation.count : 0.0;
-                double roundedAvg = Math.round(averageViews * 100.0) / 100.0;
+                double averageViralScore = aggregation.count > 0 ? aggregation.totalScore / aggregation.count : 0.0;
+                double roundedAvg = Math.round(averageViralScore * 10000.0) / 10000.0;
 
                 Document mongoDoc = new Document("platform", aggregation.platform)
                         .append("theme", aggregation.theme)
-                        .append("time_window", aggregation.timeWindow)
-                        .append("total_views", aggregation.totalViews)
-                        .append("average_views", roundedAvg)
+                        .append("total_score", aggregation.totalScore)
+                        .append("average_viral_score", roundedAvg)
                         .append("count", aggregation.count);
 
                 collection.findOneAndReplace(
                         Filters.and(
                                 Filters.eq("platform", aggregation.platform),
-                                Filters.eq("theme", aggregation.theme),
-                                Filters.eq("time_window", aggregation.timeWindow)),
+                                Filters.eq("theme", aggregation.theme)),
                         mongoDoc,
                         new FindOneAndReplaceOptions().upsert(true).returnDocument(ReturnDocument.AFTER));
 
-                long totalWrites = mongoWriteCounter.incrementAndGet();
                 long totalYt = ytMessageCounter.get();
                 long totalTt = ttMessageCounter.get();
 
-                if (totalWrites % 1000 == 0 || (totalYt + totalTt) % 1000 == 0) {
+                if ((totalYt + totalTt) % 1000 == 0) {
                     System.out.println(
-                            "Pročitano poruka -> YT: " + totalYt +
-                                    " | TT: " + totalTt +
-                                    " | Upisano u MongoDB: " + totalWrites +
-                                    " | Poslednji prozor: Platform=" + aggregation.platform +
-                                    ", Theme=" + aggregation.theme +
-                                    ", Window=" + aggregation.timeWindow +
-                                    ", Total Views=" + aggregation.totalViews);
+                            "Pročitano poruka -> YouTube [yt-monitoring-topic]: " + totalYt +
+                                    " | TikTok [tt-monitoring-topic]: " + totalTt +
+                                    " | Poslednje ažuriranje: Platform=" + aggregation.platform +
+                                    ", Theme=" + aggregation.theme + ", Total Score=" + aggregation.totalScore);
                 }
 
             } catch (Exception e) {
@@ -264,55 +246,23 @@ public class ViewsByThemeTimelineStream {
         }));
 
         streams.start();
-        System.out.println("Views By Gaming Theme Timeline Processor Started Successfully.");
+        System.out.println("Viral Score By Gaming Theme Processor Started Successfully.");
     }
 
-    private static String extractDate(JsonNode node, String platform) {
-        String fieldName = platform.equals("YouTube") ? "collected_at" : "trending_detected_time";
-        if (node.has(fieldName)) {
-            String timeStr = node.path(fieldName).asText("");
-            if (timeStr.length() >= 10) {
-                return timeStr.substring(0, 10);
+    private static double parseViralScore(JsonNode node) {
+        if (!node.has("viral_score"))
+            return 0.0;
+        JsonNode scoreNode = node.path("viral_score");
+        if (scoreNode.isNumber()) {
+            return scoreNode.asDouble(0.0);
+        } else if (scoreNode.isTextual()) {
+            try {
+                return Double.parseDouble(scoreNode.asText());
+            } catch (NumberFormatException e) {
+                return 0.0;
             }
         }
-        return LocalDate.now(ZoneId.of("UTC")).toString();
-    }
-
-    private static long parseViews(JsonNode node) {
-        if (node.has("views")) {
-            JsonNode v = node.path("views");
-            if (v.isNumber())
-                return v.asLong(0L);
-            if (v.isTextual()) {
-                try {
-                    return Long.parseLong(v.asText());
-                } catch (Exception ignored) {
-                }
-            }
-        }
-        if (node.has("view_count")) {
-            JsonNode v = node.path("view_count");
-            if (v.isNumber())
-                return v.asLong(0L);
-            if (v.isTextual()) {
-                try {
-                    return Long.parseLong(v.asText());
-                } catch (Exception ignored) {
-                }
-            }
-        }
-        if (node.has("play_count")) {
-            JsonNode v = node.path("play_count");
-            if (v.isNumber())
-                return v.asLong(0L);
-            if (v.isTextual()) {
-                try {
-                    return Long.parseLong(v.asText());
-                } catch (Exception ignored) {
-                }
-            }
-        }
-        return 0L;
+        return 0.0;
     }
 
     private static List<String> extractTikTokHashtagNames(String hashtagsStr) {
@@ -353,6 +303,7 @@ public class ViewsByThemeTimelineStream {
             return "other gaming";
         String tag = rawTag.toLowerCase().trim();
 
+        // Popular Specific Games
         if (tag.contains("roblox"))
             return "roblox";
         if (tag.contains("minecraft"))
@@ -428,6 +379,7 @@ public class ViewsByThemeTimelineStream {
         if (tag.contains("pokemon"))
             return "pokemon";
 
+        // Categories, Genres & Formats
         if (tag.contains("esports") || tag.contains("e-sports") || tag.contains("competitive")
                 || tag.contains("pro gamer"))
             return "esports";
@@ -456,6 +408,7 @@ public class ViewsByThemeTimelineStream {
         if (tag.contains("vr") || tag.contains("virtual reality"))
             return "vr gaming";
 
+        // Content Types / Video Styles
         if (tag.contains("walkthrough") || tag.contains("playthrough") || tag.contains("no commentary"))
             return "walkthrough / playthrough";
         if (tag.contains("speedrun"))
@@ -480,6 +433,7 @@ public class ViewsByThemeTimelineStream {
         if (tag.contains("co-op") || tag.contains("multiplayer"))
             return "multiplayer / co-op";
 
+        // Hardware & Setup
         if (tag.contains("setup") || tag.contains("keyboard") || tag.contains("mouse") || tag.contains("hardware")
                 || tag.contains("aim training"))
             return "hardware & setup";

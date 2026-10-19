@@ -1,27 +1,4 @@
-package com.example.kafka_streams_examples;
-
-import java.time.Duration;
-import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Properties;
-import java.util.concurrent.atomic.AtomicLong;
-
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.common.serialization.Deserializer;
-import org.apache.kafka.common.serialization.Serde;
-import org.apache.kafka.common.serialization.Serdes;
-import org.apache.kafka.common.serialization.Serializer;
-import org.apache.kafka.streams.KafkaStreams;
-import org.apache.kafka.streams.KeyValue;
-import org.apache.kafka.streams.StreamsBuilder;
-import org.apache.kafka.streams.StreamsConfig;
-import org.apache.kafka.streams.kstream.Grouped;
-import org.apache.kafka.streams.kstream.KStream;
-import org.apache.kafka.streams.kstream.KTable;
-import org.apache.kafka.streams.kstream.Materialized;
-import org.apache.kafka.streams.state.KeyValueStore;
-import org.bson.Document;
+package com.example.kafka_streams_examples.old;
 
 import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
@@ -34,8 +11,27 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.FindOneAndReplaceOptions;
 import com.mongodb.client.model.ReturnDocument;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.common.serialization.Deserializer;
+import org.apache.kafka.common.serialization.Serde;
+import org.apache.kafka.common.serialization.Serdes;
+import org.apache.kafka.common.serialization.Serializer;
+import org.apache.kafka.streams.KafkaStreams;
+import org.apache.kafka.streams.StreamsBuilder;
+import org.apache.kafka.streams.StreamsConfig;
+import org.apache.kafka.streams.kstream.Grouped;
+import org.apache.kafka.streams.kstream.KStream;
+import org.apache.kafka.streams.kstream.KTable;
+import org.apache.kafka.streams.kstream.Materialized;
+import org.apache.kafka.streams.state.KeyValueStore;
+import org.bson.Document;
 
-public class OldPeakPopularityDaysStream {
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Properties;
+import java.util.concurrent.atomic.AtomicLong;
+
+public class PeakPopularityDaysStream {
 
     private static final ObjectMapper objectMapper = new ObjectMapper()
             .enable(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS.mappedFeature());
@@ -46,19 +42,19 @@ public class OldPeakPopularityDaysStream {
         public String theme;
         public String publishTime;
         public long views;
-        public double daysToPeak;
+        public long detectedTimestamp;
 
         public VideoPayload() {
         }
 
         public VideoPayload(String platform, String videoId, String theme, String publishTime, long views,
-                double daysToPeak) {
+                long detectedTimestamp) {
             this.platform = platform;
             this.videoId = videoId;
             this.theme = theme;
             this.publishTime = publishTime;
             this.views = views;
-            this.daysToPeak = daysToPeak;
+            this.detectedTimestamp = detectedTimestamp;
         }
     }
 
@@ -68,18 +64,21 @@ public class OldPeakPopularityDaysStream {
         public String theme;
         public String publishTime;
         public long maxViews;
+        public long peakDetectedTimestamp;
         public double daysToPeak;
 
         public VideoPeakState() {
+            this.maxViews = -1L;
         }
 
         public VideoPeakState(String platform, String videoId, String theme, String publishTime, long maxViews,
-                double daysToPeak) {
+                long peakDetectedTimestamp, double daysToPeak) {
             this.platform = platform;
             this.videoId = videoId;
             this.theme = theme;
             this.publishTime = publishTime;
             this.maxViews = maxViews;
+            this.peakDetectedTimestamp = peakDetectedTimestamp;
             this.daysToPeak = daysToPeak;
         }
     }
@@ -117,19 +116,21 @@ public class OldPeakPopularityDaysStream {
     }
 
     public static void main(String[] args) {
-        System.out.println("Started Peak Popularity Days Processor for PP4.");
+        System.out.println("Started Peak Popularity Days Processor.");
 
         Properties config = new Properties();
-        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "peak-popularity-days-processor-v2");
+        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "peak-popularity-days-processor-v7");
         config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG,
                 System.getenv().getOrDefault("BOOTSTRAP_SERVERS", "broker1:9092,broker2:9092"));
         config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+
         config.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
+        config.put(StreamsConfig.STATESTORE_CACHE_MAX_BYTES_CONFIG, 10 * 1024 * 1024L);
+        config.put(StreamsConfig.NUM_STREAM_THREADS_CONFIG, 4);
         config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
-        // MongoDB konekcija
         String mongoUri = System.getenv().getOrDefault("MONGO_URI", "mongodb://admin:admin@mongodb:27017");
         String mongoDbName = System.getenv().getOrDefault("MONGO_DB", "realtime_data");
         String mongoCollectionName = System.getenv().getOrDefault("MONGO_COLLECTION", "query_4_peak_popularity_days");
@@ -140,44 +141,31 @@ public class OldPeakPopularityDaysStream {
         MongoIndexManager.ensureIndexes(database, mongoCollectionName);
         
         MongoCollection<Document> collection = database.getCollection(mongoCollectionName);
-        System.out.println(
-                "Successfully connected to MongoDB database: " + mongoDbName + ", collection: " + mongoCollectionName);
+        System.out.println("Successfully connected to MongoDB database: " + mongoDbName);
 
         StreamsBuilder builder = new StreamsBuilder();
+        AtomicLong messageCounter = new AtomicLong(0);
+        AtomicLong mongoWriteCounter = new AtomicLong(0);
 
-        AtomicLong totalMessageCounter = new AtomicLong(0);
+        KStream<String, String> ytMonitoringStream = builder.stream("yt-monitoring-topic");
+        KStream<String, String> ytSearchStream = builder.stream("yt-search-topic");
+        KStream<String, String> ttSearchStream = builder.stream("tt-search-topic");
 
-        // Čitanje sa sva 4 topika istovremeno
-        KStream<String, String> ytMonitoring = builder.stream("yt-monitoring-topic");
-        KStream<String, String> ytSearch = builder.stream("yt-search-topic");
-        KStream<String, String> ttMonitoring = builder.stream("tt-monitoring-topic");
-        KStream<String, String> ttSearch = builder.stream("tt-search-topic");
+        KStream<String, String> inputStream = ytMonitoringStream
+                .merge(ytSearchStream)
+                .merge(ttSearchStream);
 
-        // Unified Stream svih 4 topika sa logovanjem prijema
-        KStream<String, VideoPayload> allVideosStream = ytMonitoring.merge(ytSearch)
-                .merge(ttMonitoring)
-                .merge(ttSearch)
-                .peek((k, v) -> {
-                    long count = totalMessageCounter.incrementAndGet();
-                    if (count % 10 == 0 || count == 1) {
-                        System.out
-                                .println("[KAFKA_STREAM] Primljena ukupno " + count + "-ta poruka. Sadržaj (skraćeno): "
-                                        + (v != null && v.length() > 150 ? v.substring(0, 150) + "..." : v));
-                    }
-                })
-                .flatMap((key, value) -> {
-                    List<KeyValue<String, VideoPayload>> result = new ArrayList<>();
+        KTable<String, VideoPeakState> peakStateTable = inputStream
+                .flatMapValues(value -> {
                     try {
                         JsonNode node = objectMapper.readTree(value);
 
-                        String platform = node.has("region_code") || node.has("channel_id") ? "YouTube" : "TikTok";
-
                         String videoId = node.has("video_id") ? node.path("video_id").asText() : null;
                         if (videoId == null || videoId.isEmpty()) {
-                            System.err.println("[PARSER_WARNING] Poruka nema video_id! Preskačem.");
-                            return result;
+                            return java.util.Collections.emptyList();
                         }
 
+                        String platform = node.has("region_code") || node.has("channel_id") ? "YouTube" : "TikTok";
                         long views = node.has("views") ? node.path("views").asLong(0) : 0;
 
                         String publishTimeStr = node.has("publish_time") ? node.path("publish_time").asText(null)
@@ -189,66 +177,52 @@ public class OldPeakPopularityDaysStream {
                                         : Instant.now().toString());
 
                         if (publishTimeStr != null) {
-                            Instant publishInstant = Instant.parse(publishTimeStr);
-                            Instant detectedInstant = Instant.parse(detectedTimeStr);
-
-                            double daysElapsed = Duration.between(publishInstant, detectedInstant).toMillis()
-                                    / (1000.0 * 60 * 60 * 24);
-                            if (daysElapsed < 0)
-                                daysElapsed = 0.0;
-
-                            String theme = "gaming";
-
-                            VideoPayload payload = new VideoPayload(platform, videoId, theme, publishTimeStr, views,
-                                    daysElapsed);
-                            String mapKey = platform + "_" + videoId;
-                            result.add(new KeyValue<>(mapKey, payload));
-                            // System.out.println("[PARSER_SUCCESS] Uspešno obrađen video: " + videoId + " |
-                            // Platforma: " + platform + " | Views: " + views);
-                        } else {
-                            System.err.println("[PARSER_WARNING] Video " + videoId
-                                    + " nema publish_time/published_at! Presкачем.");
+                            long detectedTimestamp = Instant.parse(detectedTimeStr).toEpochMilli();
+                            VideoPayload payload = new VideoPayload(platform, videoId, "gaming", publishTimeStr, views,
+                                    detectedTimestamp);
+                            return java.util.Collections.singletonList(payload);
                         }
-                    } catch (Exception e) {
-                        System.err.println("[PARSER_ERROR] Greшка при парсирању JSON-а: " + e.getMessage()
-                                + " | Vredност: " + value);
+                    } catch (Exception ignored) {
                     }
-                    return result;
-                });
-
-        // KTable za praćenje maksimalnog broja pregleda uz logovanje agregције
-        KTable<String, VideoPeakState> peakStateTable = allVideosStream
-                .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(VideoPayload.class)))
+                    return java.util.Collections.emptyList();
+                })
+                .groupBy(
+                        (key, payload) -> payload.platform + "_" + payload.videoId,
+                        Grouped.with(Serdes.String(), new JsonSerde<>(VideoPayload.class)))
                 .aggregate(
                         VideoPeakState::new,
                         (aggKey, newPayload, aggregate) -> {
-                            if (aggregate.videoId == null) {
-                                System.out.println("[AGGREGATE_INIT] Inicijalno stanje za video: " + newPayload.videoId
-                                        + " | MaxViews: " + newPayload.views);
+                            // Inicijalizacija ako je prvi zapis ili ako novi zapis ima veći broj pregleda
+                            // (ili isto pregleda ali noviji timestamp)
+                            if (aggregate.videoId == null || newPayload.views > aggregate.maxViews
+                                    || (newPayload.views == aggregate.maxViews
+                                            && newPayload.detectedTimestamp >= aggregate.peakDetectedTimestamp)) {
+
+                                Instant publishInstant = Instant.parse(newPayload.publishTime);
+                                Instant peakInstant = Instant.ofEpochMilli(newPayload.detectedTimestamp);
+
+                                double daysElapsed = Duration.between(publishInstant, peakInstant).toMillis()
+                                        / (1000.0 * 60 * 60 * 24);
+                                if (daysElapsed < 0)
+                                    daysElapsed = 0.0;
+
                                 return new VideoPeakState(
                                         newPayload.platform,
                                         newPayload.videoId,
                                         newPayload.theme,
                                         newPayload.publishTime,
                                         newPayload.views,
-                                        newPayload.daysToPeak);
-                            }
-
-                            if (newPayload.views > aggregate.maxViews) {
-                                System.out.println("[AGGREGATE_UPDATE] Pronađen novi PEAK za video: "
-                                        + newPayload.videoId + " | Stari max: " + aggregate.maxViews + " -> Novi max: "
-                                        + newPayload.views);
-                                aggregate.maxViews = newPayload.views;
-                                aggregate.daysToPeak = newPayload.daysToPeak;
+                                        newPayload.detectedTimestamp,
+                                        daysElapsed);
                             }
                             return aggregate;
                         },
                         Materialized.<String, VideoPeakState, KeyValueStore<org.apache.kafka.common.utils.Bytes, byte[]>>as(
-                                "video-peak-store")
+                                "video-peak-state-store")
                                 .withKeySerde(Serdes.String())
                                 .withValueSerde(new JsonSerde<>(VideoPeakState.class)));
 
-        // Upisivanje agregiranih rezultata u MongoDB uz logovanje
+        // Upis u MongoDB sa praćenjem metrika
         peakStateTable.toStream().foreach((key, state) -> {
             try {
                 if (state == null || state.videoId == null)
@@ -268,11 +242,19 @@ public class OldPeakPopularityDaysStream {
                         mongoDoc,
                         new FindOneAndReplaceOptions().upsert(true).returnDocument(ReturnDocument.AFTER));
 
-                System.out.println("[MONGODB_SYNC] Uspeшно сачуван/ажуриран документ у бази за video_id: "
-                        + state.videoId + " (max_views: " + state.maxViews + ")");
+                long totalMessages = messageCounter.incrementAndGet();
+                long totalWrites = mongoWriteCounter.incrementAndGet();
+
+                if (totalMessages % 1000 == 0 || totalWrites % 1000 == 0) {
+                    System.out.println("Obrađeno poruka: " + totalMessages +
+                            " | Ažuriranih zapisa u MongoDB: " + totalWrites +
+                            " | Video ID: " + state.videoId +
+                            " | Max Views: " + state.maxViews +
+                            " | Dana do maksimuma: " + (Math.round(state.daysToPeak * 100.0) / 100.0));
+                }
 
             } catch (Exception e) {
-                System.err.println("[MONGODB_ERROR] Greška pri upisu u MongoDB za PP4: " + e.getMessage());
+                System.err.println("[MONGODB_ERROR] " + e.getMessage());
             }
         });
 
@@ -282,7 +264,6 @@ public class OldPeakPopularityDaysStream {
         Runtime.getRuntime().addShutdownHook(new Thread("streams-shutdown-hook") {
             @Override
             public void run() {
-                System.out.println("Gašenje Kafka Streams-а и MongoDB конекције...");
                 streams.close();
                 mongoClient.close();
                 latch.countDown();
@@ -291,10 +272,10 @@ public class OldPeakPopularityDaysStream {
 
         try {
             streams.start();
-            System.out.println("Peak Popularity Days Processor Started Successfully.");
+            System.out.println("Peak Popularity Stream Processor Started Successfully.");
             latch.await();
         } catch (Throwable e) {
-            System.err.println("Greška u radu aplikacije: " + e.getMessage());
+            System.err.println("Error: " + e.getMessage());
             System.exit(1);
         }
         System.exit(0);

@@ -1,4 +1,4 @@
-package com.example.kafka_streams_examples;
+package com.example.kafka_streams_examples.old;
 
 import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.databind.JsonNode;

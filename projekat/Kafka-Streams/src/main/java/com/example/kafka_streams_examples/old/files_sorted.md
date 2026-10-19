@@ -1,0 +1,10 @@
+1. ViralScoreByGamingThemeStream
+2. ViewsByThemeTimelineStream
+3. PopularGamingKeywordsStream
+4. PeakPopularityDaysStream
+5. PlatformOverlapHeatmapStream
+6. TrendDelayBetweenPlatformsStream
+7. SocialMediaEngagementStream
+8. SocialMediaDayTypeEngagementStream
+9. PlatformViralScoreStream2
+10. TimeStayingInTopRankings

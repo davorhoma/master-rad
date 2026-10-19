@@ -1,4 +1,4 @@
-package com.example.kafka_streams_examples;
+package com.example.kafka_streams_examples.old;
 
 import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -16,6 +16,8 @@ import org.bson.Document;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.Date;
 import java.util.Properties;
 
 public class SocialMediaEngagementStream {
@@ -26,14 +28,16 @@ public class SocialMediaEngagementStream {
         System.out.println("Started.");
         // Konfiguracija za Kafka Streams
         Properties config = new Properties();
-        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "social-media-engagement-processor-v2");
-        config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, System.getenv().getOrDefault("BOOTSTRAP_SERVERS", "broker1:9092,broker2:9092"));
+        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "social-media-engagement-processor-v5");
+        config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG,
+                System.getenv().getOrDefault("BOOTSTRAP_SERVERS", "broker1:9092,broker2:9092"));
         config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
-        // MongoDB konekcija (uzimamo iz environment promenljivih, baš kao u Airflow/Spark-u)
+        // MongoDB konekcija (uzimamo iz environment promenljivih, baš kao u
+        // Airflow/Spark-u)
         String mongoUri = System.getenv().getOrDefault("MONGO_URI", "mongodb://admin:admin@mongodb:27017");
         String mongoDbName = System.getenv().getOrDefault("MONGO_DB", "realtime_data");
         String mongoCollectionName = System.getenv().getOrDefault("MONGO_COLLECTION", "query_7_engagement_over_time");
@@ -42,7 +46,7 @@ public class SocialMediaEngagementStream {
         MongoDatabase database = mongoClient.getDatabase(mongoDbName);
 
         MongoIndexManager.ensureIndexes(database, mongoCollectionName);
-        
+
         MongoCollection<Document> collection = database.getCollection(mongoCollectionName);
 
         StreamsBuilder builder = new StreamsBuilder();
@@ -59,10 +63,15 @@ public class SocialMediaEngagementStream {
                 long views = node.path("views").asLong(0);
                 long likes = node.path("likes").asLong(0);
                 long comments = node.path("comments").asLong(0);
-                
+
                 double engagement = views > 0 ? (double) (likes + comments) / views : 0.0;
 
-                String collectedAt = node.has("collected_at") ? node.path("collected_at").asText() : Instant.now().toString();
+                String collectedAt = node.has("collected_at") ? node.path("collected_at").asText()
+                        : Instant.now().toString();
+
+                String dateOnly = OffsetDateTime.parse(collectedAt)
+                        .toLocalDate()
+                        .toString();
 
                 Document doc = new Document("platform", "YouTube")
                         .append("video_id", node.path("video_id").asText())
@@ -71,7 +80,8 @@ public class SocialMediaEngagementStream {
                         .append("likes", likes)
                         .append("comments", comments)
                         .append("engagement_rate", engagement)
-                        .append("timestamp", collectedAt);
+                        .append("timestamp", collectedAt)
+                        .append("date", dateOnly);
                 return doc;
             } catch (Exception e) {
                 return null;
@@ -85,10 +95,15 @@ public class SocialMediaEngagementStream {
                 long views = node.path("views").asLong(0);
                 long likes = node.path("likes").asLong(0);
                 long comments = node.path("comments").asLong(0);
-                
+
                 double engagement = views > 0 ? (double) (likes + comments) / views : 0.0;
 
-                String collectedAt = node.has("trending_detected_time") ? node.path("trending_detected_time").asText() : Instant.now().toString();
+                String collectedAt = node.has("trending_detected_time") ? node.path("trending_detected_time").asText()
+                        : Instant.now().toString();
+
+                String dateOnly = OffsetDateTime.parse(collectedAt)
+                        .toLocalDate()
+                        .toString();
 
                 Document doc = new Document("platform", "TikTok")
                         .append("video_id", node.path("video_id").asText())
@@ -97,7 +112,8 @@ public class SocialMediaEngagementStream {
                         .append("likes", likes)
                         .append("comments", comments)
                         .append("engagement_rate", engagement)
-                        .append("timestamp", collectedAt);
+                        .append("timestamp", collectedAt)
+                        .append("date", dateOnly);
                 return doc;
             } catch (Exception e) {
                 return null;
@@ -118,7 +134,7 @@ public class SocialMediaEngagementStream {
         });
 
         KafkaStreams streams = new KafkaStreams(builder.build(), config);
-        
+
         // Gašenje aplikacije uz oslobađanje Mongo resursa
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             streams.close();

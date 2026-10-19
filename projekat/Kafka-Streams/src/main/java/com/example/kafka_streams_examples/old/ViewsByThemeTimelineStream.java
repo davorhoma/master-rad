@@ -1,4 +1,4 @@
-package com.example.kafka_streams_examples;
+package com.example.kafka_streams_examples.old;
 
 import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
@@ -18,9 +18,10 @@ import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.serialization.Serializer;
 import org.apache.kafka.streams.*;
 import org.apache.kafka.streams.kstream.*;
-import org.apache.kafka.streams.state.KeyValueStore;
 import org.bson.Document;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
@@ -28,23 +29,28 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class PlatformOverlapHeatmapStream {
+public class ViewsByThemeTimelineStream {
 
     private static final ObjectMapper objectMapper = new ObjectMapper()
             .enable(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS.mappedFeature());
 
-    public static class PlatformThemeCount {
+    public static class DetailedViewsAggregation {
         public String platform;
         public String theme;
+        public String timeWindow;
+        public long totalViews;
         public long count;
 
-        public PlatformThemeCount() {
+        public DetailedViewsAggregation() {
+            this.totalViews = 0L;
             this.count = 0L;
         }
 
-        public PlatformThemeCount(String platform, String theme, long count) {
+        public DetailedViewsAggregation(String platform, String theme, String timeWindow, long totalViews, long count) {
             this.platform = platform;
             this.theme = theme;
+            this.timeWindow = timeWindow;
+            this.totalViews = totalViews;
             this.count = count;
         }
     }
@@ -82,10 +88,10 @@ public class PlatformOverlapHeatmapStream {
     }
 
     public static void main(String[] args) {
-        System.out.println("Started Platform Overlap Heatmap Processor.");
+        System.out.println("Started Views By Gaming Theme Timeline Processor with Payload Timestamps.");
 
         Properties config = new Properties();
-        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "platform-overlap-heatmap-processor-v1");
+        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "views-by-theme-timeline-processor-v1");
         config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG,
                 System.getenv().getOrDefault("BOOTSTRAP_SERVERS", "broker1:9092,broker2:9092"));
         config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
@@ -94,11 +100,9 @@ public class PlatformOverlapHeatmapStream {
         config.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
         config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
-        // MongoDB konekcija prilagođena za rezultat sa grafika (PP5 – Platform Overlap
-        // Heatmap)
         String mongoUri = System.getenv().getOrDefault("MONGO_URI", "mongodb://admin:admin@mongodb:27017");
         String mongoDbName = System.getenv().getOrDefault("MONGO_DB", "realtime_data");
-        String mongoCollectionName = System.getenv().getOrDefault("MONGO_COLLECTION", "query_5_platform_overlap");
+        String mongoCollectionName = System.getenv().getOrDefault("MONGO_COLLECTION", "query_2_views_timeline");
 
         MongoClient mongoClient = MongoClients.create(mongoUri);
         MongoDatabase database = mongoClient.getDatabase(mongoDbName);
@@ -109,28 +113,32 @@ public class PlatformOverlapHeatmapStream {
 
         StreamsBuilder builder = new StreamsBuilder();
 
+        // Brojači za ulazne poruke i upise u bazu
         AtomicLong ytMessageCounter = new AtomicLong(0);
         AtomicLong ttMessageCounter = new AtomicLong(0);
+        AtomicLong mongoWriteCounter = new AtomicLong(0);
 
-        // Čitanje sa YouTube i TikTok topika
         KStream<String, String> ytStream = builder.stream("yt-monitoring-topic");
         KStream<String, String> ttStream = builder.stream("tt-monitoring-topic");
 
-        // Mapiranje YouTube poruka u događaje prebrojavanja po kanonskoj temi
         KStream<String, Document> ytProcessed = ytStream.flatMap((key, value) -> {
             List<KeyValue<String, Document>> result = new ArrayList<>();
             try {
                 JsonNode node = objectMapper.readTree(value);
+                long views = parseViews(node);
+                String timeWindow = extractDate(node, "YouTube");
+
                 String tagsStr = node.has("tags") ? node.path("tags").asText("") : "";
                 if (!tagsStr.isEmpty()) {
                     String[] tags = tagsStr.split("\\|");
                     for (String tag : tags) {
                         String rawTheme = tag.trim().toLowerCase();
                         if (!rawTheme.isEmpty()) {
-                            String canonicalTheme = mapToCanonicalTheme(rawTheme);
                             Document doc = new Document("platform", "YouTube")
-                                    .append("theme", canonicalTheme);
-                            result.add(new KeyValue<>("YouTube_" + canonicalTheme, doc));
+                                    .append("theme", rawTheme)
+                                    .append("time_window", timeWindow)
+                                    .append("views", views);
+                            result.add(new KeyValue<>("YouTube_" + rawTheme + "_" + timeWindow, doc));
                         }
                     }
                 }
@@ -141,21 +149,24 @@ public class PlatformOverlapHeatmapStream {
             return result;
         });
 
-        // Mapiranje TikTok poruka u događaje prebrojavanja po kanonskoj temi
         KStream<String, Document> ttProcessed = ttStream.flatMap((key, value) -> {
             List<KeyValue<String, Document>> result = new ArrayList<>();
             try {
                 JsonNode node = objectMapper.readTree(value);
+                long views = parseViews(node);
+                String timeWindow = extractDate(node, "TikTok");
+
                 String hashtagsStr = node.has("hashtags") ? node.path("hashtags").asText("") : "";
                 List<String> hashtagNames = extractTikTokHashtagNames(hashtagsStr);
 
                 for (String hashtag : hashtagNames) {
                     String rawTheme = hashtag.trim().toLowerCase();
                     if (!rawTheme.isEmpty()) {
-                        String canonicalTheme = mapToCanonicalTheme(rawTheme);
                         Document doc = new Document("platform", "TikTok")
-                                .append("theme", canonicalTheme);
-                        result.add(new KeyValue<>("TikTok_" + canonicalTheme, doc));
+                                .append("theme", rawTheme)
+                                .append("time_window", timeWindow)
+                                .append("views", views);
+                        result.add(new KeyValue<>("TikTok_" + rawTheme + "_" + timeWindow, doc));
                     }
                 }
                 ttMessageCounter.incrementAndGet();
@@ -165,61 +176,78 @@ public class PlatformOverlapHeatmapStream {
             return result;
         });
 
-        // Spajanje tokova i agregacija frekvencija (broja pojavljivanja) po ključu
-        // (Platforma + Tema)
         KStream<String, Document> mergedStream = ytProcessed.merge(ttProcessed);
 
-        KTable<String, PlatformThemeCount> aggregatedOverlap = mergedStream
+        // Agregacija po platformi, temi i datumu iz payload-a
+        KTable<String, DetailedViewsAggregation> aggregatedThemesTimeline = mergedStream
                 .map((key, doc) -> {
                     String platform = doc.getString("platform");
-                    String theme = doc.getString("theme");
-                    String groupKey = platform + "_" + theme;
+                    String rawTheme = doc.getString("theme");
+                    String timeWindow = doc.getString("time_window");
+                    String canonicalTheme = mapToCanonicalTheme(rawTheme);
+                    long views = doc.getLong("views");
 
-                    PlatformThemeCount initialVal = new PlatformThemeCount(platform, theme, 1L);
+                    String groupKey = platform + "_" + canonicalTheme + "_" + timeWindow;
+                    DetailedViewsAggregation initialVal = new DetailedViewsAggregation(platform, canonicalTheme,
+                            timeWindow, views, 1L);
                     return new KeyValue<>(groupKey, initialVal);
                 })
-                .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(PlatformThemeCount.class)))
+                .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(DetailedViewsAggregation.class)))
                 .aggregate(
-                        PlatformThemeCount::new,
+                        DetailedViewsAggregation::new,
                         (aggKey, newRecord, aggregate) -> {
                             if (aggregate.platform == null)
                                 aggregate.platform = newRecord.platform;
                             if (aggregate.theme == null)
                                 aggregate.theme = newRecord.theme;
+                            if (aggregate.timeWindow == null)
+                                aggregate.timeWindow = newRecord.timeWindow;
+                            aggregate.totalViews += newRecord.totalViews;
                             aggregate.count += newRecord.count;
                             return aggregate;
                         },
-                        Materialized.<String, PlatformThemeCount, KeyValueStore<org.apache.kafka.common.utils.Bytes, byte[]>>as(
-                                "platform-overlap-store")
+                        Materialized.<String, DetailedViewsAggregation, org.apache.kafka.streams.state.KeyValueStore<org.apache.kafka.common.utils.Bytes, byte[]>>as(
+                                "views-timeline-store")
                                 .withKeySerde(Serdes.String())
-                                .withValueSerde(new JsonSerde<>(PlatformThemeCount.class)));
+                                .withValueSerde(new JsonSerde<>(DetailedViewsAggregation.class)));
 
-        // Sinhronizacija iz KTable u MongoDB kolekciju za iscrtavanje heatmap-a
-        aggregatedOverlap.toStream().foreach((aggKey, aggregation) -> {
+        // Upis u MongoDB
+        aggregatedThemesTimeline.toStream().foreach((aggKey, aggregation) -> {
             try {
-                if (aggregation == null || aggregation.theme == null || aggregation.platform == null)
+                if (aggregation == null || aggregation.theme == null || aggregation.timeWindow == null)
                     return;
+
+                double averageViews = aggregation.count > 0 ? (double) aggregation.totalViews / aggregation.count : 0.0;
+                double roundedAvg = Math.round(averageViews * 100.0) / 100.0;
 
                 Document mongoDoc = new Document("platform", aggregation.platform)
                         .append("theme", aggregation.theme)
-                        .append("appeared_times", aggregation.count);
+                        .append("time_window", aggregation.timeWindow)
+                        .append("total_views", aggregation.totalViews)
+                        .append("average_views", roundedAvg)
+                        .append("count", aggregation.count);
 
                 collection.findOneAndReplace(
                         Filters.and(
                                 Filters.eq("platform", aggregation.platform),
-                                Filters.eq("theme", aggregation.theme)),
+                                Filters.eq("theme", aggregation.theme),
+                                Filters.eq("time_window", aggregation.timeWindow)),
                         mongoDoc,
                         new FindOneAndReplaceOptions().upsert(true).returnDocument(ReturnDocument.AFTER));
 
+                long totalWrites = mongoWriteCounter.incrementAndGet();
                 long totalYt = ytMessageCounter.get();
                 long totalTt = ttMessageCounter.get();
 
-                if ((totalYt + totalTt) % 1000 == 0) {
+                if (totalWrites % 1000 == 0 || (totalYt + totalTt) % 1000 == 0) {
                     System.out.println(
-                            "Pročitano poruka -> YouTube: " + totalYt +
-                                    " | TikTok: " + totalTt +
-                                    " | Ažurirano: Platform=" + aggregation.platform +
-                                    ", Theme=" + aggregation.theme + ", Appeared Times=" + aggregation.count);
+                            "Pročitano poruka -> YT: " + totalYt +
+                                    " | TT: " + totalTt +
+                                    " | Upisano u MongoDB: " + totalWrites +
+                                    " | Poslednji prozor: Platform=" + aggregation.platform +
+                                    ", Theme=" + aggregation.theme +
+                                    ", Window=" + aggregation.timeWindow +
+                                    ", Total Views=" + aggregation.totalViews);
                 }
 
             } catch (Exception e) {
@@ -236,7 +264,55 @@ public class PlatformOverlapHeatmapStream {
         }));
 
         streams.start();
-        System.out.println("Platform Overlap Heatmap Processor Started Successfully.");
+        System.out.println("Views By Gaming Theme Timeline Processor Started Successfully.");
+    }
+
+    private static String extractDate(JsonNode node, String platform) {
+        String fieldName = platform.equals("YouTube") ? "collected_at" : "trending_detected_time";
+        if (node.has(fieldName)) {
+            String timeStr = node.path(fieldName).asText("");
+            if (timeStr.length() >= 10) {
+                return timeStr.substring(0, 10);
+            }
+        }
+        return LocalDate.now(ZoneId.of("UTC")).toString();
+    }
+
+    private static long parseViews(JsonNode node) {
+        if (node.has("views")) {
+            JsonNode v = node.path("views");
+            if (v.isNumber())
+                return v.asLong(0L);
+            if (v.isTextual()) {
+                try {
+                    return Long.parseLong(v.asText());
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        if (node.has("view_count")) {
+            JsonNode v = node.path("view_count");
+            if (v.isNumber())
+                return v.asLong(0L);
+            if (v.isTextual()) {
+                try {
+                    return Long.parseLong(v.asText());
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        if (node.has("play_count")) {
+            JsonNode v = node.path("play_count");
+            if (v.isNumber())
+                return v.asLong(0L);
+            if (v.isTextual()) {
+                try {
+                    return Long.parseLong(v.asText());
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        return 0L;
     }
 
     private static List<String> extractTikTokHashtagNames(String hashtagsStr) {
@@ -277,7 +353,6 @@ public class PlatformOverlapHeatmapStream {
             return "other gaming";
         String tag = rawTag.toLowerCase().trim();
 
-        // Popular Specific Games
         if (tag.contains("roblox"))
             return "roblox";
         if (tag.contains("minecraft"))
@@ -353,7 +428,6 @@ public class PlatformOverlapHeatmapStream {
         if (tag.contains("pokemon"))
             return "pokemon";
 
-        // Categories, Genres & Formats
         if (tag.contains("esports") || tag.contains("e-sports") || tag.contains("competitive")
                 || tag.contains("pro gamer"))
             return "esports";
@@ -382,7 +456,6 @@ public class PlatformOverlapHeatmapStream {
         if (tag.contains("vr") || tag.contains("virtual reality"))
             return "vr gaming";
 
-        // Content Types / Video Styles
         if (tag.contains("walkthrough") || tag.contains("playthrough") || tag.contains("no commentary"))
             return "walkthrough / playthrough";
         if (tag.contains("speedrun"))
@@ -407,7 +480,6 @@ public class PlatformOverlapHeatmapStream {
         if (tag.contains("co-op") || tag.contains("multiplayer"))
             return "multiplayer / co-op";
 
-        // Hardware & Setup
         if (tag.contains("setup") || tag.contains("keyboard") || tag.contains("mouse") || tag.contains("hardware")
                 || tag.contains("aim training"))
             return "hardware & setup";

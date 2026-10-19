@@ -1,4 +1,4 @@
-package com.example.kafka_streams_examples;
+package com.example.kafka_streams_examples.old;
 
 import com.example.mongo.MongoIndexManager;
 import com.fasterxml.jackson.core.json.JsonReadFeature;
@@ -21,34 +21,48 @@ import org.apache.kafka.streams.kstream.*;
 import org.apache.kafka.streams.state.KeyValueStore;
 import org.bson.Document;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class ViralScoreByGamingThemeStream {
+public class TrendDelayBetweenPlatformsStream {
 
     private static final ObjectMapper objectMapper = new ObjectMapper()
             .enable(JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS.mappedFeature());
 
-    public static class DetailedScoreAggregation {
-        public String platform;
+    public static class ThemePlatformState {
         public String theme;
-        public double totalScore;
-        public long count;
+        public String ytFirstDate;
+        public String ttFirstDate;
 
-        public DetailedScoreAggregation() {
-            this.totalScore = 0.0;
-            this.count = 0L;
+        public ThemePlatformState() {
         }
 
-        public DetailedScoreAggregation(String platform, String theme, double totalScore, long count) {
+        public ThemePlatformState(String theme, String ytFirstDate, String ttFirstDate) {
+            this.theme = theme;
+            this.ytFirstDate = ytFirstDate;
+            this.ttFirstDate = ttFirstDate;
+        }
+    }
+
+    public static class PlatformDateRecord {
+        public String platform;
+        public String theme;
+        public String date;
+
+        public PlatformDateRecord() {
+        }
+
+        public PlatformDateRecord(String platform, String theme, String date) {
             this.platform = platform;
             this.theme = theme;
-            this.totalScore = totalScore;
-            this.count = count;
+            this.date = date;
         }
     }
 
@@ -85,10 +99,10 @@ public class ViralScoreByGamingThemeStream {
     }
 
     public static void main(String[] args) {
-        System.out.println("Started Viral Score By Gaming Theme Processor with Canonical Normalization.");
+        System.out.println("Started Trend Delay Between Platforms Processor.");
 
         Properties config = new Properties();
-        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "viral-score-by-theme-processor-v4");
+        config.put(StreamsConfig.APPLICATION_ID_CONFIG, "trend-delay-platforms-processor-v1");
         config.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG,
                 System.getenv().getOrDefault("BOOTSTRAP_SERVERS", "broker1:9092,broker2:9092"));
         config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
@@ -97,10 +111,9 @@ public class ViralScoreByGamingThemeStream {
         config.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
         config.put(StreamsConfig.STATE_DIR_CONFIG, "/app/kafka-streams");
 
-        // MongoDB konekcija
         String mongoUri = System.getenv().getOrDefault("MONGO_URI", "mongodb://admin:admin@mongodb:27017");
         String mongoDbName = System.getenv().getOrDefault("MONGO_DB", "realtime_data");
-        String mongoCollectionName = System.getenv().getOrDefault("MONGO_COLLECTION", "query_1_viral_score_themes");
+        String mongoCollectionName = System.getenv().getOrDefault("MONGO_COLLECTION", "query_6_trend_delay");
 
         MongoClient mongoClient = MongoClients.create(mongoUri);
         MongoDatabase database = mongoClient.getDatabase(mongoDbName);
@@ -111,190 +124,151 @@ public class ViralScoreByGamingThemeStream {
 
         StreamsBuilder builder = new StreamsBuilder();
 
-        AtomicLong ytMessageCounter = new AtomicLong(0);
-        AtomicLong ttMessageCounter = new AtomicLong(0);
-
         KStream<String, String> ytStream = builder.stream("yt-monitoring-topic");
         KStream<String, String> ttStream = builder.stream("tt-monitoring-topic");
 
-        KStream<String, Document> ytProcessed = ytStream.flatMap((key, value) -> {
-            List<KeyValue<String, Document>> result = new ArrayList<>();
+        // Mapiranje YouTube unosa u [theme, PlatformDateRecord]
+        KStream<String, PlatformDateRecord> ytProcessed = ytStream.flatMap((key, value) -> {
+            List<KeyValue<String, PlatformDateRecord>> result = new ArrayList<>();
             try {
                 JsonNode node = objectMapper.readTree(value);
-                double viralScore = parseViralScore(node);
-
                 String tagsStr = node.has("tags") ? node.path("tags").asText("") : "";
+                String timestampStr = node.has("collected_at") ? node.path("collected_at").asText()
+                        : Instant.now().toString();
+                LocalDate date = OffsetDateTime.parse(timestampStr).toLocalDate();
+
                 if (!tagsStr.isEmpty()) {
-                    String[] tags = tagsStr.split("\\|");
-                    for (String tag : tags) {
+                    for (String tag : tagsStr.split("\\|")) {
                         String rawTheme = tag.trim().toLowerCase();
                         if (!rawTheme.isEmpty()) {
-                            Document doc = new Document("platform", "YouTube")
-                                    .append("theme", rawTheme)
-                                    .append("viral_score", viralScore);
-                            result.add(new KeyValue<>("YouTube_" + rawTheme, doc));
+                            String canonicalTheme = mapToCanonicalTheme(rawTheme);
+                            PlatformDateRecord record = new PlatformDateRecord("YouTube", canonicalTheme,
+                                    date.toString());
+                            result.add(new KeyValue<>(canonicalTheme, record));
                         }
                     }
                 }
-                ytMessageCounter.incrementAndGet();
             } catch (Exception e) {
                 System.err.println("Greška pri mapiranju YT JSON-a: " + e.getMessage());
             }
             return result;
         });
 
-        KStream<String, Document> ttProcessed = ttStream.flatMap((key, value) -> {
-            List<KeyValue<String, Document>> result = new ArrayList<>();
+        // Mapiranje TikTok unosa u [theme, PlatformDateRecord]
+        KStream<String, PlatformDateRecord> ttProcessed = ttStream.flatMap((key, value) -> {
+            List<KeyValue<String, PlatformDateRecord>> result = new ArrayList<>();
             try {
                 JsonNode node = objectMapper.readTree(value);
-                double viralScore = parseViralScore(node);
-
                 String hashtagsStr = node.has("hashtags") ? node.path("hashtags").asText("") : "";
-                List<String> hashtagNames = extractTikTokHashtagNames(hashtagsStr);
+                String timestampStr = node.has("trending_detected_time") ? node.path("trending_detected_time").asText()
+                        : (node.has("collected_at") ? node.path("collected_at").asText() : Instant.now().toString());
+                LocalDate date = OffsetDateTime.parse(timestampStr).toLocalDate();
 
-                for (String hashtag : hashtagNames) {
+                for (String hashtag : extractTikTokHashtagNames(hashtagsStr)) {
                     String rawTheme = hashtag.trim().toLowerCase();
                     if (!rawTheme.isEmpty()) {
-                        Document doc = new Document("platform", "TikTok")
-                                .append("theme", rawTheme)
-                                .append("viral_score", viralScore);
-                        result.add(new KeyValue<>("TikTok_" + rawTheme, doc));
+                        String canonicalTheme = mapToCanonicalTheme(rawTheme);
+                        PlatformDateRecord record = new PlatformDateRecord("TikTok", canonicalTheme, date.toString());
+                        result.add(new KeyValue<>(canonicalTheme, record));
                     }
                 }
-                ttMessageCounter.incrementAndGet();
             } catch (Exception e) {
                 System.err.println("Greška pri mapiranju TT JSON-a: " + e.getMessage());
             }
             return result;
         });
 
-        KStream<String, Document> mergedStream = ytProcessed.merge(ttProcessed);
+        // Spajanje tokova
+        KStream<String, PlatformDateRecord> mergedStream = ytProcessed.merge(ttProcessed);
 
-        KTable<String, DetailedScoreAggregation> aggregatedThemes = mergedStream
-                .map((key, doc) -> {
-                    String platform = doc.getString("platform");
-                    String rawTheme = doc.getString("theme");
-                    String canonicalTheme = mapToCanonicalTheme(rawTheme);
-                    double score = doc.getDouble("viral_score");
-
-                    String groupKey = platform + "_" + canonicalTheme;
-
-                    DetailedScoreAggregation initialVal = new DetailedScoreAggregation(platform, canonicalTheme, score,
-                            1L);
-                    return new KeyValue<>(groupKey, initialVal);
-                })
-                .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(DetailedScoreAggregation.class)))
+        // Agregacija po ključu (theme) sa ispravnim tipovima
+        KTable<String, ThemePlatformState> aggregatedDelay = mergedStream
+                .groupByKey(Grouped.with(Serdes.String(), new JsonSerde<>(PlatformDateRecord.class)))
                 .aggregate(
-                        DetailedScoreAggregation::new,
+                        ThemePlatformState::new,
                         (aggKey, newRecord, aggregate) -> {
-                            if (aggregate.platform == null)
-                                aggregate.platform = newRecord.platform;
                             if (aggregate.theme == null)
-                                aggregate.theme = newRecord.theme;
-                            aggregate.totalScore += newRecord.totalScore;
-                            aggregate.count += newRecord.count;
+                                aggregate.theme = aggKey;
+
+                            if ("YouTube".equals(newRecord.platform)) {
+                                if (aggregate.ytFirstDate == null
+                                        || newRecord.date.compareTo(aggregate.ytFirstDate) < 0) {
+                                    aggregate.ytFirstDate = newRecord.date;
+                                }
+                            } else if ("TikTok".equals(newRecord.platform)) {
+                                if (aggregate.ttFirstDate == null
+                                        || newRecord.date.compareTo(aggregate.ttFirstDate) < 0) {
+                                    aggregate.ttFirstDate = newRecord.date;
+                                }
+                            }
                             return aggregate;
                         },
-                        Materialized.<String, DetailedScoreAggregation, KeyValueStore<org.apache.kafka.common.utils.Bytes, byte[]>>as(
-                                "canonical-theme-store")
+                        Materialized.<String, ThemePlatformState, KeyValueStore<org.apache.kafka.common.utils.Bytes, byte[]>>as(
+                                "trend-delay-store")
                                 .withKeySerde(Serdes.String())
-                                .withValueSerde(new JsonSerde<>(DetailedScoreAggregation.class)));
+                                .withValueSerde(new JsonSerde<>(ThemePlatformState.class)));
 
-        aggregatedThemes.toStream().foreach((aggKey, aggregation) -> {
+        // Sinhronizacija u MongoDB
+        aggregatedDelay.toStream().foreach((theme, state) -> {
             try {
-                if (aggregation == null || aggregation.theme == null)
+                if (state == null || state.ytFirstDate == null || state.ttFirstDate == null) {
+                    // Potrebno je da tema postoji na obe platforme da bi se izračunalo kašnjenje
                     return;
+                }
 
-                double averageViralScore = aggregation.count > 0 ? aggregation.totalScore / aggregation.count : 0.0;
-                double roundedAvg = Math.round(averageViralScore * 10000.0) / 10000.0;
+                LocalDate ytDate = LocalDate.parse(state.ytFirstDate);
+                LocalDate ttDate = LocalDate.parse(state.ttFirstDate);
 
-                Document mongoDoc = new Document("platform", aggregation.platform)
-                        .append("theme", aggregation.theme)
-                        .append("total_score", aggregation.totalScore)
-                        .append("average_viral_score", roundedAvg)
-                        .append("count", aggregation.count);
+                String firstPlatform;
+                long delayDays;
+
+                if (ytDate.isBefore(ttDate)) {
+                    firstPlatform = "YouTube";
+                    delayDays = ChronoUnit.DAYS.between(ytDate, ttDate);
+                } else if (ttDate.isBefore(ytDate)) {
+                    firstPlatform = "TikTok";
+                    delayDays = ChronoUnit.DAYS.between(ttDate, ytDate);
+                } else {
+                    firstPlatform = "Both / Simultaneous";
+                    delayDays = 0L;
+                }
+
+                Document mongoDoc = new Document("theme", theme)
+                        .append("first_platform", firstPlatform)
+                        .append("delay_days", delayDays)
+                        .append("youtube_first_date", state.ytFirstDate)
+                        .append("tiktok_first_date", state.ttFirstDate);
 
                 collection.findOneAndReplace(
-                        Filters.and(
-                                Filters.eq("platform", aggregation.platform),
-                                Filters.eq("theme", aggregation.theme)),
+                        Filters.eq("theme", theme),
                         mongoDoc,
                         new FindOneAndReplaceOptions().upsert(true).returnDocument(ReturnDocument.AFTER));
 
-                long totalYt = ytMessageCounter.get();
-                long totalTt = ttMessageCounter.get();
-
-                if ((totalYt + totalTt) % 1000 == 0) {
-                    System.out.println(
-                            "Pročitano poruka -> YouTube [yt-monitoring-topic]: " + totalYt +
-                                    " | TikTok [tt-monitoring-topic]: " + totalTt +
-                                    " | Poslednje ažuriranje: Platform=" + aggregation.platform +
-                                    ", Theme=" + aggregation.theme + ", Total Score=" + aggregation.totalScore);
-                }
-
             } catch (Exception e) {
-                System.err.println("KRITIČNA GREŠKA U MONGODB UPSERT-у za ključ: " + aggKey);
+                System.err.println("Greška pri upisu u MongoDB za temu: " + theme);
                 e.printStackTrace();
             }
         });
 
         KafkaStreams streams = new KafkaStreams(builder.build(), config);
-
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            streams.close();
-            mongoClient.close();
-        }));
+        Runtime.getRuntime().addShutdownHook(new Thread(streams::close));
 
         streams.start();
-        System.out.println("Viral Score By Gaming Theme Processor Started Successfully.");
-    }
-
-    private static double parseViralScore(JsonNode node) {
-        if (!node.has("viral_score"))
-            return 0.0;
-        JsonNode scoreNode = node.path("viral_score");
-        if (scoreNode.isNumber()) {
-            return scoreNode.asDouble(0.0);
-        } else if (scoreNode.isTextual()) {
-            try {
-                return Double.parseDouble(scoreNode.asText());
-            } catch (NumberFormatException e) {
-                return 0.0;
-            }
-        }
-        return 0.0;
+        System.out.println("Trend Delay Between Platforms Processor Started Successfully.");
     }
 
     private static List<String> extractTikTokHashtagNames(String hashtagsStr) {
         List<String> names = new ArrayList<>();
-        if (hashtagsStr == null || hashtagsStr.isEmpty()) {
+        if (hashtagsStr == null || hashtagsStr.isEmpty())
             return names;
-        }
 
         Pattern pattern = Pattern.compile("'name':\\s*'([^']+)'|\"name\":\\s*\"([^\"]+)\"");
         Matcher matcher = pattern.matcher(hashtagsStr);
-
         while (matcher.find()) {
             String name = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
-            if (name != null && !name.isEmpty()) {
+            if (name != null && !name.isEmpty())
                 names.add(name);
-            }
         }
-
-        if (names.isEmpty() && hashtagsStr.trim().startsWith("[")) {
-            try {
-                JsonNode arrayNode = objectMapper.readTree(hashtagsStr);
-                if (arrayNode.isArray()) {
-                    for (JsonNode item : arrayNode) {
-                        if (item.has("name")) {
-                            names.add(item.path("name").asText());
-                        }
-                    }
-                }
-            } catch (Exception ignored) {
-            }
-        }
-
         return names;
     }
 
