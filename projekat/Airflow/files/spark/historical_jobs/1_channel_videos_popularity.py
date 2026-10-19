@@ -7,9 +7,9 @@ from pyspark.sql.window import Window
 if __name__ == "__main__":
     youtube_path = sys.argv[1]
     tiktok_path = sys.argv[2]
-    mongo_uri = sys.argv[3]
-    mongo_db = sys.argv[4]
-    mongo_collection = sys.argv[5]
+    jdbc_url = sys.argv[3]
+    pg_schema = sys.argv[4]
+    pg_table = sys.argv[5]
 
     spark = SparkSession.builder.appName("channel_videos_popularity").getOrCreate()
 
@@ -117,34 +117,8 @@ if __name__ == "__main__":
         "popularity_rank",
     )
 
-    # 10. Upis u MongoDB
-    (
-        final_result.write.format("mongodb")
-        .mode("overwrite")
-        .option("connection.uri", mongo_uri)
-        .option("database", mongo_db)
-        .option("collection", mongo_collection)
-        .save()
-    )
+    from postgres_sink import write_postgres
 
-    print(
-        "Top 15 najpopularnijih video klipova po kanalu " "uspešno izračunato i upisano u MongoDB."
-    )
+    write_postgres(final_result, jdbc_url, pg_schema, pg_table)
 
-    from pymongo import MongoClient
-    
-    client = MongoClient(mongo_uri)
-
-    db = client[mongo_db]
-    collection = db[mongo_collection]
-
-    collection.create_index(
-        [
-            ("channel_title", 1),
-            ("platform", 1),
-            ("popularity_rank", 1),
-        ],
-        name="channel_platform_rank_idx",
-    )
-
-    client.close()
+    print("Top 15 channel videos successfully written to PostgreSQL.")

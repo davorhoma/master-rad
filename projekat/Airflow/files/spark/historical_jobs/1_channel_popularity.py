@@ -7,9 +7,9 @@ import pyspark.sql.functions as F
 if __name__ == "__main__":
     youtube_path = sys.argv[1]
     tiktok_path = sys.argv[2]
-    mongo_uri = sys.argv[3]
-    mongo_db = sys.argv[4]
-    mongo_collection = sys.argv[5]
+    jdbc_url = sys.argv[3]
+    pg_schema = sys.argv[4]
+    pg_table = sys.argv[5]
 
     spark = SparkSession.builder.appName("channel_content_popularity_quadrant").getOrCreate()
 
@@ -148,16 +148,10 @@ if __name__ == "__main__":
         "quadrant",
     )
 
-    # 11. Upis u MongoDB
-    (
-        final_result.write.format("mongodb")
-        .mode("overwrite")
-        .option("connection.uri", mongo_uri)
-        .option("database", mongo_db)
-        .option("collection", mongo_collection)
-        .save()
-    )
+    from postgres_sink import write_postgres
 
-    print("Channel/content popularity quadrant dataset uspešno izračunat i upisan u MongoDB.")
+    write_postgres(final_result, jdbc_url, pg_schema, pg_table)
+
+    print("Channel/content popularity quadrant dataset successfully written to PostgreSQL.")
 
     spark.stop()

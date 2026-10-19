@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 
 from airflow.decorators import dag
@@ -40,7 +40,8 @@ def upload_joined_files_if_missing():
     dag_id="transform_data",
     description="DAG for transforming raw YouTube and TikTok data",
     start_date=datetime(2026, 1, 1),
-    catchup=False
+    catchup=False,
+    default_args={"retries": 1, "retry_delay": timedelta(minutes=5)},
 )
 
 def transform_raw_data():
@@ -55,7 +56,7 @@ def transform_raw_data():
         conn_id="SPARK_CONNECTION",
         application_args=[
             "{{ var.value.HDFS_DEFAULT_FS }}/data/youtube_all_joined.csv",
-            "{{ var.value.HDFS_DEFAULT_FS }}/transformed_youtube_data",
+            "{{ var.value.get('YOUTUBE_PARQUET_PATH', var.value.HDFS_DEFAULT_FS ~ '/transformed_youtube_data') }}",
         ],
     )
 
@@ -65,10 +66,41 @@ def transform_raw_data():
             conn_id="SPARK_CONNECTION",
             application_args=[
                 "{{ var.value.HDFS_DEFAULT_FS }}/data/tiktok_all_joined.csv",
-                "{{ var.value.HDFS_DEFAULT_FS }}/transformed_tiktok_data",
+                "{{ var.value.get('TIKTOK_PARQUET_PATH', var.value.HDFS_DEFAULT_FS ~ '/transformed_tiktok_data') }}",
             ],
         )
 
+    postgres_spark_jars = {
+        "spark.jars": "/opt/spark/jars/postgresql-42.7.8.jar",
+        "spark.submit.pyFiles": "/opt/airflow/files/spark/postgres_sink.py",
+        "spark.executor.extraClassPath": "/opt/spark/jars/*",
+        "spark.driver.extraClassPath": "/opt/spark/jars/*",
+    }
+
+    build_dashboard_2_analytics = SparkSubmitOperator(
+        task_id="build_dashboard_2_analytics",
+        application="/opt/airflow/files/spark/analytical_jobs/theme_dashboard_batch.py",
+        conn_id="SPARK_CONNECTION",
+        conf=postgres_spark_jars,
+        env_vars={
+            "PYTHONPATH": (
+                "/opt/spark/python/lib/pyspark.zip:"
+                "/opt/spark/python/lib/py4j-0.10.9.7-src.zip"
+            )
+        },
+        application_args=[
+            "{{ var.value.get('YOUTUBE_PARQUET_PATH', var.value.HDFS_DEFAULT_FS ~ '/transformed_youtube_data') }}",
+            "{{ var.value.get('TIKTOK_PARQUET_PATH', var.value.HDFS_DEFAULT_FS ~ '/transformed_tiktok_data') }}",
+            "{{ var.value.ANALYTICS_POSTGRES_JDBC_URL }}",
+            "{{ var.value.ANALYTICS_POSTGRES_SCHEMA }}",
+            "{{ var.value.get('THEME_DAILY_COLLECTION', 'theme_daily_metrics_2') }}",
+            "{{ var.value.get('THEME_TAG_DAILY_COLLECTION', 'theme_tag_daily_metrics_2') }}",
+            "{{ var.value.get('THEME_RANKINGS_COLLECTION', 'theme_rankings_2') }}",
+            "{{ var.value.get('THEME_MINIMUM_VIDEOS', '50') }}",
+        ],
+    )
+
     upload_joined_data >> [prepare_initial_youtube_data, prepare_initial_tiktok_data]
+    [prepare_initial_youtube_data, prepare_initial_tiktok_data] >> build_dashboard_2_analytics
 
 transform_raw_data()

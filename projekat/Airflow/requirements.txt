@@ -3,7 +3,7 @@ apache-airflow-providers-apache-spark==5.4.1
 apache-airflow-providers-common-compat==1.10.1
 pandas
 kafka-python
-pymongo>=4.8,<5
+psycopg2-binary>=2.9,<3
 
 google-api-python-client>=2.0.0
 python-dotenv>=1.0.0
