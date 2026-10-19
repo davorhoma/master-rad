@@ -1,0 +1,140 @@
+diff --git a/superset-frontend/plugins/plugin-chart-echarts/src/Timeseries/EchartsTimeseries.test.tsx b/superset-frontend/plugins/plugin-chart-echarts/src/Timeseries/EchartsTimeseries.test.tsx
+index 6804f9c9..e8f56349 100644
+--- a/superset-frontend/plugins/plugin-chart-echarts/src/Timeseries/EchartsTimeseries.test.tsx
++++ b/superset-frontend/plugins/plugin-chart-echarts/src/Timeseries/EchartsTimeseries.test.tsx
+@@ -396,3 +396,102 @@ test('does not emit cross-filter when no dimensions and time-based X-axis', asyn
+     expect(setDataMaskMock).not.toHaveBeenCalled();
+   }
+ });
++
++// Test for issue #41102: horizontal bar cross-filter must use the category
++// value, not the metric. For horizontal bars the data tuple is value-first
++// (e.g. [100, 'Product A']), so relying on data[0] emitted the metric value.
++test('emits cross-filter on the category value for a horizontal categorical bar', async () => {
++  const setDataMaskMock = jest.fn();
++
++  const propsWithHorizontalXAxis: TimeseriesChartTransformedProps = {
++    ...defaultProps,
++    emitCrossFilters: true,
++    setDataMask: setDataMaskMock,
++    groupby: [], // No dimensions
++    xAxis: {
++      label: 'category_column',
++      type: AxisType.Category, // Categorical X-axis
++    },
++  };
++
++  render(<EchartsTimeseries {...propsWithHorizontalXAxis} />);
++
++  const lastCall = mockEchart.mock.calls.at(-1);
++  expect(lastCall).toBeDefined();
++  const [props] = lastCall as [EchartsProps];
++
++  const clickHandler = props.eventHandlers?.click;
++  if (clickHandler) {
++    clickHandler({
++      seriesName: 'Sales', // This is the metric name
++      data: [100, 'Product A'], // Horizontal: value first, category second
++      name: 'Product A',
++      dataIndex: 0,
++    });
++
++    await waitFor(
++      () => {
++        expect(setDataMaskMock).toHaveBeenCalled();
++      },
++      { timeout: 500 },
++    );
++
++    // Must filter on the category ('Product A'), not the metric value (100)
++    const dataMaskCall = setDataMaskMock.mock.calls[0][0];
++    expect(dataMaskCall.extraFormData.filters).toEqual([
++      {
++        col: 'category_column',
++        op: 'IN',
++        val: ['Product A'],
++      },
++    ]);
++  }
++});
++
++// Test for issue #41102: the context-menu ("Add cross-filter") path must also
++// use the category value, not the metric, for a horizontal categorical bar.
++test('context menu cross-filter uses the category value for a horizontal categorical bar', async () => {
++  const onContextMenuMock = jest.fn();
++
++  const propsWithHorizontalXAxis: TimeseriesChartTransformedProps = {
++    ...defaultProps,
++    emitCrossFilters: true,
++    onContextMenu: onContextMenuMock,
++    groupby: [], // No dimensions
++    xAxis: {
++      label: 'category_column',
++      type: AxisType.Category, // Categorical X-axis
++    },
++  };
++
++  render(<EchartsTimeseries {...propsWithHorizontalXAxis} />);
++
++  const lastCall = mockEchart.mock.calls.at(-1);
++  expect(lastCall).toBeDefined();
++  const [props] = lastCall as [EchartsProps];
++
++  const contextMenuHandler = props.eventHandlers?.contextmenu;
++  expect(contextMenuHandler).toBeDefined();
++  if (contextMenuHandler) {
++    await contextMenuHandler({
++      seriesName: 'Sales', // This is the metric name
++      data: [100, 'Product A'], // Horizontal: value first, category second
++      name: 'Product A',
++      event: { stop: jest.fn(), event: { clientX: 10, clientY: 20 } },
++    });
++
++    await waitFor(() => {
++      expect(onContextMenuMock).toHaveBeenCalled();
++    });
++
++    // The cross-filter must use the category ('Product A'), not the metric (100)
++    const { crossFilter } = onContextMenuMock.mock.calls[0][2];
++    expect(crossFilter.dataMask.extraFormData.filters).toEqual([
++      {
++        col: 'category_column',
++        op: 'IN',
++        val: ['Product A'],
++      },
++    ]);
++  }
++});
+diff --git a/superset-frontend/plugins/plugin-chart-echarts/src/Timeseries/EchartsTimeseries.tsx b/superset-frontend/plugins/plugin-chart-echarts/src/Timeseries/EchartsTimeseries.tsx
+index 328c3fdd..5fcc1021 100644
+--- a/superset-frontend/plugins/plugin-chart-echarts/src/Timeseries/EchartsTimeseries.tsx
++++ b/superset-frontend/plugins/plugin-chart-echarts/src/Timeseries/EchartsTimeseries.tsx
+@@ -234,9 +234,12 @@ export default function EchartsTimeseries({
+           // Cross-filter by dimension (original behavior)
+           const { seriesName: name } = props;
+           handleChange(name);
+-        } else if (canCrossFilterByXAxis && props.data?.[0] != null) {
+-          // Cross-filter by X-axis value when no dimensions (issue #25334)
+-          handleXAxisChange(props.data[0]);
++        } else if (canCrossFilterByXAxis && props.name != null) {
++          // Cross-filter by X-axis value when no dimensions (issue #25334).
++          // Use `name` (the category-axis value) instead of `data[0]`: for
++          // horizontal bars the data tuple is value-first, so `data[0]` would
++          // be the metric value rather than the category (issue #41102).
++          handleXAxisChange(props.name);
+         }
+       }, TIMER_DURATION);
+     },
+@@ -318,8 +321,10 @@ export default function EchartsTimeseries({
+         let crossFilter;
+         if (hasDimensions) {
+           crossFilter = getCrossFilterDataMask(seriesName);
+-        } else if (canCrossFilterByXAxis && data?.[0] != null) {
+-          crossFilter = getXAxisCrossFilterDataMask(data[0]);
++        } else if (canCrossFilterByXAxis && eventParams.name != null) {
++          // Use `name` (the category-axis value), not `data[0]`, so horizontal
++          // bars cross-filter on the category and not the metric (issue #41102).
++          crossFilter = getXAxisCrossFilterDataMask(eventParams.name);
+         }
+ 
+         onContextMenu(pointerEvent.clientX, pointerEvent.clientY, {

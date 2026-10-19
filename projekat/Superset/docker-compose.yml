@@ -46,8 +46,9 @@ services:
 
   superset:
     build:
-      context: .
+      context: ./frontend-patch
       dockerfile: Dockerfile
+    image: superset-crossfilter:6.1.0
 
     container_name: superset
 
